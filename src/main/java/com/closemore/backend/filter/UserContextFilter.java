@@ -12,23 +12,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
-/**
- * Java port of the request-entry piece of src/lib/auth.ts (getAuthContext), scoped to what
- * Phase 0 needs: proving out the RLS session-variable mechanism (Section 5 of the reference
- * doc) end-to-end before real auth exists.
- *
- * TEMPORARY, PHASE 0 ONLY: the original getAuthContext() only trusts X-User-ID and then loads
- * Role/Organization_Name from the users table. That table lookup needs the User JPA repository,
- * which doesn't exist until Phase 1 (step 8). So for Phase 0 this filter also reads
- * X-User-Role / X-User-Tenant directly off the request, purely so the tenant-isolation
- * integration test can drive real requests through the full filter -> AOP -> set_config path
- * without a User entity yet.
- *
- * TODO (Phase 2, item 10 "Authentication"): once Finding 2 is decided, replace the body of this
- * filter with either (a) the header-trust lookup against UserRepository, or (b) JWT validation.
- * Either way, X-User-Role / X-User-Tenant read from the client MUST be deleted at that point -
- * trusting a client-supplied role/tenant is only acceptable as a Phase 0 scaffolding shortcut.
- */
 @Component
 @RequiredArgsConstructor
 public class UserContextFilter extends OncePerRequestFilter {

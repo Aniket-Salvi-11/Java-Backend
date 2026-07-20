@@ -6,19 +6,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.Set;
 
-/**
- * Verbatim port of src/lib/rbac.ts (reference doc, Section 4). Five functions, used across
- * every route/service in the original app - nothing is condensed here, matching the reference
- * doc's instruction to port these directly.
- *
- * Usage pattern to preserve when wiring these into Phase 3 services (see reference doc):
- *  - blockExecutiveWrites(user)      -> top of every write path (POST/PUT/DELETE) on
- *                                        Deals, Contacts, Activities, Tasks.
- *  - canViewAll(user)                -> decides whether owner-filtering applies to list queries.
- *  - requireOwnerOrAdmin             -> standard single-resource guard (Contacts, most Deal sub-routes).
- *  - requireOwnerOrTeamOrAdmin       -> Deal detail/update routes specifically (deals can have a team).
- *  - requireRole(user, Role.ADMIN)   -> used directly on Pipelines, Products, Users, Admin routes.
- */
 @Service
 @RequiredArgsConstructor
 public class RbacService {
@@ -68,14 +55,6 @@ public class RbacService {
         }
     }
 
-    /**
-     * export const requireOwnerOrTeamOrAdmin = async (user, dealId, ownerId) => { ... }
-     *
-     * The original queries deal_team_members directly rather than going through a repository,
-     * so this Phase 0 port does the same via JdbcTemplate - a Phase 1 DealTeamMemberRepository
-     * can replace this query once the JPA entities exist (step 8), the SQL shape doesn't need
-     * to change.
-     */
     public void requireOwnerOrTeamOrAdmin(AuthenticatedUser user, String dealId, String ownerId) {
         if (user == null) {
             throw new RbacException(401, "Not authenticated");

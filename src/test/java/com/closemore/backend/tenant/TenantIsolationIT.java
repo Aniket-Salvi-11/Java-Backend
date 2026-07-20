@@ -19,19 +19,6 @@ import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Reference doc, Phase 1 step 7 / Section 5, rule 37: "release gate, not an optional
- * nice-to-have." Runs against the REAL schema now (V1-V9 in db/migration, copied verbatim
- * from the JS repo's 001_init.sql...008_deal_teams.sql). Flyway applies them automatically
- * against the Testcontainers instance.
- *
- * What this proves: two "tenants" (different Organization_Name), each with their own user
- * and one owned contact, run concurrently on a shared HikariCP pool. Tenant A must see
- * exactly its own contact count, tenant B its own - never the other's, and never a leaked
- * session variable from a connection the pool handed back mid-request.
- *
- * Requires Docker to be available wherever this test runs.
- */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class TenantIsolationIT {
