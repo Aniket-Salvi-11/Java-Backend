@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: closemore-backend
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/closemore}
+    username: ${DB_USER:closemore}
+    password: ${DB_PASSWORD:closemore}
+
+  jpa:
+    hibernate:
+      # Phase 0/1: schema is owned entirely by Flyway (the ported 001-008 .sql files), never
+      # by Hibernate. validate here is a safety net that fails fast if entities drift from
+      # the actual DDL - never change this to update/create.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.closemore.backend: DEBUG
