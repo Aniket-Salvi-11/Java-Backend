@@ -77,8 +77,13 @@ class TenantIsolationIT {
     JdbcTemplate jdbcTemplate;
 
     @BeforeEach
-    void seedTwoTenants() {
-        jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) connection -> {
+    void seedTwoTenants() throws Exception {
+        // Seed on a SEPARATE SUPERUSER connection, not the injected (restricted) jdbcTemplate.
+        // The app role intentionally cannot bypass RLS or freely write every table, so seeding
+        // through it hits "permission denied". Production seeding wouldn't go through the
+        // RLS-restricted app path either, so this is also the more faithful setup.
+        try (java.sql.Connection connection = java.sql.DriverManager.getConnection(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
             connection.setAutoCommit(false);
             try (var stmt = connection.createStatement()) {
                 stmt.execute("SET LOCAL app.bypass_rls = 'true'");
@@ -101,9 +106,7 @@ class TenantIsolationIT {
                         """);
             }
             connection.commit();
-            connection.setAutoCommit(true);
-            return null;
-        });
+        }
     }
 
     @Test
