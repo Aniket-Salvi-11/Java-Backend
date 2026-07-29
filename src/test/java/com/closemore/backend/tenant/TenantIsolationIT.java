@@ -2,7 +2,6 @@ package com.closemore.backend.tenant;
 
 import com.closemore.backend.context.RequestUserContext;
 import com.closemore.backend.context.RequestUserContextHolder;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * `mvn test`. Requires Docker.
  *
  * NON-SUPERUSER CONNECTION: Flyway migrates as the container SUPERUSER; the app datasource
- * connects as the restricted 'closemore_app' role (see RlsTestRole). Superusers/table owners
+ * connects as the restricted 'closemore_app' role (see src/test/resources/db/callback/afterMigrate__grant_app_role.sql). Superusers/table owners
  * bypass RLS unconditionally, so querying as the superuser would make every tenant see every row.
  *
  * POOL SIZE 2: pool of 1 deadlocks Flyway at startup (it needs a connection while the app holds
@@ -45,10 +44,6 @@ class TenantIsolationIT {
             .withUsername("closemore")
             .withPassword("closemore");
 
-    @BeforeAll
-    static void createRestrictedRole() {
-        RlsTestRole.create(postgres);
-    }
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -56,10 +51,13 @@ class TenantIsolationIT {
         registry.add("spring.flyway.user", postgres::getUsername);
         registry.add("spring.flyway.password", postgres::getPassword);
         registry.add("spring.flyway.enabled", () -> "true");
+        // Test-only callback creates the restricted role AFTER the schema is built
+        // (src/test/resources/db/callback/afterMigrate__grant_app_role.sql).
+        registry.add("spring.flyway.callbacks", () -> "db/callback");
 
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", () -> RlsTestRole.APP_ROLE);
-        registry.add("spring.datasource.password", () -> RlsTestRole.APP_PASSWORD);
+        registry.add("spring.datasource.username", () -> "closemore_app");
+        registry.add("spring.datasource.password", () -> "closemore_app_pw");
 
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> "2");
     }

@@ -33,10 +33,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * CRITICAL - NON-SUPERUSER CONNECTION: Flyway migrates as the container's default SUPERUSER
  * (correct - DDL needs it), but the application datasource connects as the restricted
- * 'closemore_app' role created in @BeforeAll. Superusers and table owners bypass RLS
+ * 'closemore_app' role created by the afterMigrate Flyway callback. Superusers and table owners bypass RLS
  * unconditionally, so if the app queried as the superuser, every tenant would see every row and
- * these assertions would all fail with "expected 0 but was N". See RlsTestRole for the full
- * explanation.
+ * these assertions would all fail with "expected 0 but was N". See the afterMigrate callback for the full explanation.
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -49,11 +48,6 @@ class RepositoryTenantIsolationIT {
             .withUsername("closemore")
             .withPassword("closemore");
 
-    @BeforeAll
-    static void createRestrictedRole() {
-        // Container is started by the @Container/@Testcontainers lifecycle before @BeforeAll.
-        RlsTestRole.create(postgres);
-    }
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -62,12 +56,15 @@ class RepositoryTenantIsolationIT {
         registry.add("spring.flyway.user", postgres::getUsername);
         registry.add("spring.flyway.password", postgres::getPassword);
         registry.add("spring.flyway.enabled", () -> "true");
+        // Test-only callback creates the restricted role AFTER the schema is built
+        // (src/test/resources/db/callback/afterMigrate__grant_app_role.sql).
+        registry.add("spring.flyway.callbacks", () -> "db/callback");
 
         // ...but the APP datasource (Hibernate + JdbcTemplate) uses the RESTRICTED role, so RLS
         // actually applies to every query the tests make.
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", () -> RlsTestRole.APP_ROLE);
-        registry.add("spring.datasource.password", () -> RlsTestRole.APP_PASSWORD);
+        registry.add("spring.datasource.username", () -> "closemore_app");
+        registry.add("spring.datasource.password", () -> "closemore_app_pw");
 
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> "2");
     }
