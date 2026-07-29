@@ -4,12 +4,15 @@ import com.closemore.backend.context.RequestUserContext;
 import com.closemore.backend.context.RequestUserContextHolder;
 import com.closemore.backend.domain.ContactEntity;
 import com.closemore.backend.repository.ContactRepository;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,25 +26,17 @@ import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-
 /**
- * THE Phase 1 de-risking test.
+ * THE Phase 1 de-risking test: proves RLS holds when HIBERNATE runs the query through a Spring
+ * Data repository (not just JdbcTemplate). Pool pinned to 2 (1 deadlocks Flyway at startup; 2 is
+ * the minimum that lets Flyway migrate while still letting the concurrency window exist).
  *
- * TenantIsolationIT (Phase 0) proved the mechanism when a JdbcTemplate query runs. This proves it
- * still holds when HIBERNATE runs the query through a Spring Data repository - which is the case
- * that actually matters for every real feature, and the one place the "set_config on the SAME
- * connection as the query" invariant could quietly break.
- *
- * Why it could break, specifically: Hibernate acquires its JDBC connection lazily, and historically
- * could defer acquisition until first statement execution. TenantContextAspect issues set_config via
- * JdbcTemplate at the very start of the @Transactional method. If Hibernate were to run its entity
- * query on a DIFFERENT physical connection than the one JdbcTemplate wrote the session variables to,
- * RLS would see no tenant context and return zero rows - or, worse, a stale one. Spring binds both to
- * the same transaction-scoped connection via DataSourceUtils, so they should match; this test is the
- * evidence, not the assumption. Pool pinned to 1 so "same connection" is forced, not hoped for.
+ * CRITICAL - NON-SUPERUSER CONNECTION: Flyway migrates as the container's default SUPERUSER
+ * (correct - DDL needs it), but the application datasource connects as the restricted
+ * 'closemore_app' role created in @BeforeAll. Superusers and table owners bypass RLS
+ * unconditionally, so if the app queried as the superuser, every tenant would see every row and
+ * these assertions would all fail with "expected 0 but was N". See RlsTestRole for the full
+ * explanation.
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -54,20 +49,30 @@ class RepositoryTenantIsolationIT {
             .withUsername("closemore")
             .withPassword("closemore");
 
+    @BeforeAll
+    static void createRestrictedRole() {
+        // Container is started by the @Container/@Testcontainers lifecycle before @BeforeAll.
+        RlsTestRole.create(postgres);
+    }
+
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
+        // Flyway uses the SUPERUSER credentials (DDL + FORCE RLS need owner/superuser rights)...
+        registry.add("spring.flyway.url", postgres::getJdbcUrl);
+        registry.add("spring.flyway.user", postgres::getUsername);
+        registry.add("spring.flyway.password", postgres::getPassword);
         registry.add("spring.flyway.enabled", () -> "true");
+
+        // ...but the APP datasource (Hibernate + JdbcTemplate) uses the RESTRICTED role, so RLS
+        // actually applies to every query the tests make.
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", () -> RlsTestRole.APP_ROLE);
+        registry.add("spring.datasource.password", () -> RlsTestRole.APP_PASSWORD);
+
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> "2");
     }
 
-    /**
-     * Real repository call wrapped in @Transactional so TenantContextAspect fires. This is the
-     * production-shaped path: service method -> aspect sets session vars -> repository -> Hibernate.
-     */
-   @TestConfiguration
+    @TestConfiguration
     static class TestBeans {
         @Bean
         ContactReadService contactReadService(ContactRepository contacts) {
@@ -92,17 +97,15 @@ class RepositoryTenantIsolationIT {
         }
     }
 
-    @Autowired
-    RequestUserContextHolder contextHolder;
-
-    @Autowired
-    ContactReadService readService;
-
-    @Autowired
-    JdbcTemplate jdbcTemplate;
+    @Autowired RequestUserContextHolder contextHolder;
+    @Autowired ContactReadService readService;
+    @Autowired JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void seedTwoTenants() {
+        // Seeds via the superuser JdbcTemplate? No - JdbcTemplate here uses the app datasource
+        // (restricted role), which is subject to RLS. So we bypass RLS explicitly for the seed
+        // using SET LOCAL app.bypass_rls, exactly as seed.mjs does, inside one transaction.
         jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) connection -> {
             connection.setAutoCommit(false);
             try (var stmt = connection.createStatement()) {
@@ -155,10 +158,6 @@ class RepositoryTenantIsolationIT {
 
     @Test
     void entitiesMatchTheRealSchema_validateWouldHaveFailedOtherwise() {
-        // If UserEntity/ContactEntity drifted from the DDL, the application context would not have
-        // started (ddl-auto: validate). Reaching this assertion at all means the mappings are
-        // schema-exact. The read-back also confirms the trigger-managed Created_At is populated and
-        // readable via the entity (insertable=false path).
         ContactEntity loaded = asTenant("user-a", "Sales_Rep", "Acme",
                 () -> readService.byId("contact-a")).orElseThrow();
 

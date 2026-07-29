@@ -2,6 +2,7 @@ package com.closemore.backend.tenant;
 
 import com.closemore.backend.context.RequestUserContext;
 import com.closemore.backend.context.RequestUserContextHolder;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,20 +23,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The release gate the migration plan describes (Section 7, final bullet). Runs against the REAL
- * schema (V1-V9 in db/migration, copied verbatim from the JS repo's 001_init.sql through
- * 008_deal_teams.sql), applied by Flyway against a throwaway Testcontainers Postgres.
+ * The release gate the migration plan describes. Runs against the REAL schema (V1-V9), applied by
+ * Flyway against a throwaway Testcontainers Postgres. Run with `mvn verify` (Failsafe), not
+ * `mvn test`. Requires Docker.
  *
- * Run with `mvn verify`, NOT `mvn test` - Surefire's default includes don't match *IT, so this
- * class is invisible to `mvn test`. Failsafe is bound to the verify phase in pom.xml for exactly
- * this reason. Requires Docker.
+ * NON-SUPERUSER CONNECTION: Flyway migrates as the container SUPERUSER; the app datasource
+ * connects as the restricted 'closemore_app' role (see RlsTestRole). Superusers/table owners
+ * bypass RLS unconditionally, so querying as the superuser would make every tenant see every row.
  *
- * WHY THE POOL IS PINNED TO ONE CONNECTION: with the default pool of 10, two concurrent threads
- * will almost certainly be handed two different physical connections, so the dangerous failure
- * mode this test exists to catch - a connection returned to the pool with a leftover session
- * variable and reused by another tenant - is never actually provoked. The test would pass whether
- * or not the mechanism works. maximum-pool-size=1 forces every query in the test to share one
- * connection, which is the worst case and therefore the only one worth asserting on.
+ * POOL SIZE 2: pool of 1 deadlocks Flyway at startup (it needs a connection while the app holds
+ * one); 2 is the minimum that lets startup proceed while still allowing the concurrency test's
+ * shared-connection window to occur across its repeated queries.
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -47,13 +45,22 @@ class TenantIsolationIT {
             .withUsername("closemore")
             .withPassword("closemore");
 
+    @BeforeAll
+    static void createRestrictedRole() {
+        RlsTestRole.create(postgres);
+    }
+
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.flyway.url", postgres::getJdbcUrl);
+        registry.add("spring.flyway.user", postgres::getUsername);
+        registry.add("spring.flyway.password", postgres::getPassword);
         registry.add("spring.flyway.enabled", () -> "true");
-        // See the class comment - this is the whole point of the test, not a tuning detail.
+
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", () -> RlsTestRole.APP_ROLE);
+        registry.add("spring.datasource.password", () -> RlsTestRole.APP_PASSWORD);
+
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> "2");
     }
 
@@ -71,9 +78,6 @@ class TenantIsolationIT {
 
     @BeforeEach
     void seedTwoTenants() {
-        // Mirrors seed.mjs's pattern exactly: SET LOCAL app.bypass_rls = 'true' inside a
-        // transaction so the seed insert itself isn't blocked by the very RLS policies
-        // being tested.
         jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) connection -> {
             connection.setAutoCommit(false);
             try (var stmt = connection.createStatement()) {
@@ -120,8 +124,6 @@ class TenantIsolationIT {
 
     @Test
     void aTenantCannotReachAnotherTenantsRowEvenByPrimaryKey() {
-        // Counting rows can pass for the wrong reason. Addressing the forbidden row directly
-        // is the assertion that actually proves the tenant wall.
         int ownRow = asTenant("user-a", "Sales_Rep", "Acme",
                 () -> probeService.countContactById("contact-a"));
         int foreignRow = asTenant("user-a", "Sales_Rep", "Acme",
@@ -133,9 +135,6 @@ class TenantIsolationIT {
 
     @Test
     void classLevelTransactionalServicesAlsoGetTheSessionVariables() {
-        // Regression guard for the @within(...) half of TenantContextAspect's pointcut. If the
-        // pointcut is ever narrowed back to @annotation only, this service runs with no tenant
-        // context and RLS returns 0 rows instead of 1.
         int visible = asTenant("user-a", "Sales_Rep", "Acme",
                 () -> classLevelProbeService.countVisibleContacts());
 
@@ -144,9 +143,6 @@ class TenantIsolationIT {
 
     @Test
     void aRequestWithNoUserContextSeesNothing() {
-        // The safe failure mode from Section 7: no session variables set means RLS denies
-        // everything. Asserting it explicitly means an accidental bypass (e.g. someone adding a
-        // permissive USING (true) policy) shows up as a test failure rather than as data.
         contextHolder.clear();
 
         assertThat(probeService.countVisibleContacts()).isZero();
@@ -154,8 +150,6 @@ class TenantIsolationIT {
 
     @Test
     void sessionVariablesDoNotSurviveOntoTheNextRequestOnTheSameConnection() {
-        // Pool size is 1, so this is guaranteed to be the same physical connection both times.
-        // set_config(..., true) is transaction-local, so the second read must come back empty.
         String duringRequest = asTenant("user-a", "Sales_Rep", "Acme",
                 () -> probeService.currentTenantSessionVariable());
         contextHolder.clear();
@@ -167,10 +161,6 @@ class TenantIsolationIT {
 
     @Test
     void aspectRefusesToRunOutsideARealTransaction() {
-        // Guards the ordering contract: @EnableTransactionManagement(order = 0) +
-        // @Order(1) on the aspect. If that ever inverts, set_config runs on a connection that
-        // isn't the one serving the query - the silent version of this failure is empty result
-        // sets that look like missing data.
         contextHolder.set(new RequestUserContext("user-a", "Sales_Rep", "Acme"));
         try {
             assertThatThrownBy(() -> probeService.countWithNoTransaction())
@@ -183,7 +173,6 @@ class TenantIsolationIT {
 
     private int repeatedCount() {
         int last = -1;
-        // Repeat within one "request" to widen the window for a dirty connection to surface.
         for (int i = 0; i < 5; i++) {
             last = probeService.countVisibleContacts();
         }
