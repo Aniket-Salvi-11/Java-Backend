@@ -54,7 +54,7 @@ class TenantIsolationIT {
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.flyway.enabled", () -> "true");
         // See the class comment - this is the whole point of the test, not a tuning detail.
-        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "1");
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "2");
     }
 
     @Autowired

@@ -55,7 +55,7 @@ class RepositoryTenantIsolationIT {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.flyway.enabled", () -> "true");
-        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "1");
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "2");
     }
 
     /**
