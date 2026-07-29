@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class RbacServiceTest {
 
@@ -92,5 +93,39 @@ class RbacServiceTest {
         assertThatThrownBy(() -> rbac.requireOwnerOrTeamOrAdmin(salesRep, "deal-1", "someone-else"))
                 .isInstanceOf(RbacException.class)
                 .extracting(e -> ((RbacException) e).getStatus()).isEqualTo(403);
+    }
+
+    @Test
+    void allGuardsRejectAnUnauthenticatedUserWith401() {
+        // rbac.ts throws 401 'Not authenticated' from four of the five functions before it does
+        // anything else. Missing one of these in the Java port would turn an anonymous request
+        // into a 403 (or worse, a pass) instead of a 401 - a contract difference the frontend
+        // would see.
+        assertThatThrownBy(() -> rbac.requireRole(null, Role.ADMIN))
+                .isInstanceOf(RbacException.class)
+                .extracting(e -> ((RbacException) e).getStatus()).isEqualTo(401);
+        assertThatThrownBy(() -> rbac.blockExecutiveWrites(null))
+                .isInstanceOf(RbacException.class)
+                .extracting(e -> ((RbacException) e).getStatus()).isEqualTo(401);
+        assertThatThrownBy(() -> rbac.requireOwnerOrAdmin(null, "u-1"))
+                .isInstanceOf(RbacException.class)
+                .extracting(e -> ((RbacException) e).getStatus()).isEqualTo(401);
+        assertThatThrownBy(() -> rbac.requireOwnerOrTeamOrAdmin(null, "deal-1", "u-1"))
+                .isInstanceOf(RbacException.class)
+                .extracting(e -> ((RbacException) e).getStatus()).isEqualTo(401);
+    }
+
+    @Test
+    void requireOwnerOrAdmin_allowsWhenOwnerIdIsNull() {
+        // Matches the original's `if (ownerId && ownerId !== user.User_ID)` - a null/absent owner
+        // is NOT treated as a denial. Easy to "improve" during a port and silently change
+        // behaviour on records with no owner set.
+        rbac.requireOwnerOrAdmin(new AuthenticatedUser("u-1", Role.SALES_REP), null);
+    }
+
+    @Test
+    void requireOwnerOrTeamOrAdmin_executiveBypassesTheTeamLookupEntirely() {
+        rbac.requireOwnerOrTeamOrAdmin(new AuthenticatedUser("u-1", Role.EXECUTIVE), "deal-1", "someone-else");
+        verifyNoInteractions(jdbcTemplate);
     }
 }
