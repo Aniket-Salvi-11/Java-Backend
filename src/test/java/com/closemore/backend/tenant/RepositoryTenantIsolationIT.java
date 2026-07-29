@@ -23,6 +23,10 @@ import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+
 /**
  * THE Phase 1 de-risking test.
  *
@@ -41,6 +45,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@Import(RepositoryTenantIsolationIT.TestBeans.class)
 class RepositoryTenantIsolationIT {
 
     @Container
@@ -62,7 +67,14 @@ class RepositoryTenantIsolationIT {
      * Real repository call wrapped in @Transactional so TenantContextAspect fires. This is the
      * production-shaped path: service method -> aspect sets session vars -> repository -> Hibernate.
      */
-    @Service
+   @TestConfiguration
+    static class TestBeans {
+        @Bean
+        ContactReadService contactReadService(ContactRepository contacts) {
+            return new ContactReadService(contacts);
+        }
+    }
+
     static class ContactReadService {
         private final ContactRepository contacts;
         ContactReadService(ContactRepository contacts) {
@@ -70,12 +82,12 @@ class RepositoryTenantIsolationIT {
         }
 
         @Transactional
-        List<ContactEntity> listAll() {
+        public List<ContactEntity> listAll() {
             return contacts.findAll();
         }
 
         @Transactional
-        Optional<ContactEntity> byId(String id) {
+        public Optional<ContactEntity> byId(String id) {
             return contacts.findById(id);
         }
     }
