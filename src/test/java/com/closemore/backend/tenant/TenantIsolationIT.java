@@ -1,111 +1,36 @@
 package com.closemore.backend.tenant;
 
 import com.closemore.backend.context.RequestUserContext;
-import com.closemore.backend.context.RequestUserContextHolder;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The release gate the migration plan describes. Runs against the REAL schema (V1-V9), applied by
- * Flyway against a throwaway Testcontainers Postgres. Run with `mvn verify` (Failsafe), not
- * `mvn test`. Requires Docker.
+ * Flyway against a throwaway Testcontainers Postgres. Run with {@code mvn verify} (Failsafe), not
+ * {@code mvn test}. Requires Docker.
  *
- * NON-SUPERUSER CONNECTION: Flyway migrates as the container SUPERUSER; the app datasource
- * connects as the restricted 'closemore_app' role (see src/test/resources/db/callback/afterMigrate__grant_app_role.sql). Superusers/table owners
- * bypass RLS unconditionally, so querying as the superuser would make every tenant see every row.
+ * <p>All container and datasource wiring now lives in {@link AbstractRlsIT}. In particular the
+ * application connects as the non-superuser {@code closemore_app} role created during container
+ * initdb, so ENABLE/FORCE ROW LEVEL SECURITY actually applies to these queries; as the container
+ * superuser every assertion below would fail with "expected 1 but was 2".
  *
- * POOL SIZE 2: pool of 1 deadlocks Flyway at startup (it needs a connection while the app holds
- * one); 2 is the minimum that lets startup proceed while still allowing the concurrency test's
- * shared-connection window to occur across its repeated queries.
+ * <p>{@link RlsWiringPreconditionsIT} asserts that precondition directly, so if this class starts
+ * failing you can tell a broken policy from a broken connection at a glance.
  */
-@Testcontainers
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
-class TenantIsolationIT {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
-            .withDatabaseName("closemore")
-            .withUsername("closemore")
-            .withPassword("closemore");
-
-
-    @DynamicPropertySource
-    static void datasourceProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.flyway.url", postgres::getJdbcUrl);
-        registry.add("spring.flyway.user", postgres::getUsername);
-        registry.add("spring.flyway.password", postgres::getPassword);
-        registry.add("spring.flyway.enabled", () -> "true");
-        // Test-only callback creates the restricted role AFTER the schema is built
-        // (src/test/resources/db/callback/afterMigrate__grant_app_role.sql).
-        registry.add("spring.flyway.callbacks", () -> "db/callback");
-
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", () -> "closemore_app");
-        registry.add("spring.datasource.password", () -> "closemore_app_pw");
-
-        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "2");
-    }
-
-    @Autowired
-    RequestUserContextHolder contextHolder;
+class TenantIsolationIT extends AbstractRlsIT {
 
     @Autowired
     TenantIsolationProbeService probeService;
 
     @Autowired
     ClassLevelTransactionalProbeService classLevelProbeService;
-
-    @Autowired
-    JdbcTemplate jdbcTemplate;
-
-    @BeforeEach
-    void seedTwoTenants() throws Exception {
-        // Seed on a SEPARATE SUPERUSER connection, not the injected (restricted) jdbcTemplate.
-        // The app role intentionally cannot bypass RLS or freely write every table, so seeding
-        // through it hits "permission denied". Production seeding wouldn't go through the
-        // RLS-restricted app path either, so this is also the more faithful setup.
-        try (java.sql.Connection connection = java.sql.DriverManager.getConnection(
-                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
-            connection.setAutoCommit(false);
-            try (var stmt = connection.createStatement()) {
-                stmt.execute("SET LOCAL app.bypass_rls = 'true'");
-                stmt.execute("""
-                        INSERT INTO users ("User_ID","First_Name","Last_Name","Email","Role","Status","Organization_Name")
-                        VALUES
-                          ('user-a','A','Owner','a-owner@example.com','Sales_Rep','Active','Acme'),
-                          ('user-b','B','Owner','b-owner@example.com','Sales_Rep','Active','Globex')
-                        ON CONFLICT ("User_ID") DO NOTHING
-                        """);
-                stmt.execute("""
-                        INSERT INTO contacts ("Contact_ID","First_Name","Last_Name","Email","Phone_Primary",
-                          "Organization_Name","Contact_Type","Source","Created_Date","Owner_ID")
-                        VALUES
-                          ('contact-a','Alpha','Client','alpha@example.com','555-0001','Acme Client Co',
-                           'Lead','Test','2026-01-01','user-a'),
-                          ('contact-b','Beta','Client','beta@example.com','555-0002','Globex Client Co',
-                           'Lead','Test','2026-01-01','user-b')
-                        ON CONFLICT ("Contact_ID") DO NOTHING
-                        """);
-            }
-            connection.commit();
-        }
-    }
 
     @Test
     void concurrentTenantsOnASharedPoolNeverSeeEachOthersRows() throws Exception {
@@ -157,6 +82,8 @@ class TenantIsolationIT {
         String afterRequest = probeService.currentTenantSessionVariable();
 
         assertThat(duringRequest).isEqualTo("Acme");
+        // set_config(..., true) is transaction-local: on COMMIT the GUC reverts to its session
+        // default, which for a never-explicitly-set custom GUC reads back as the empty string.
         assertThat(afterRequest).isNullOrEmpty();
     }
 
@@ -178,14 +105,5 @@ class TenantIsolationIT {
             last = probeService.countVisibleContacts();
         }
         return last;
-    }
-
-    private <T> T asTenant(String userId, String role, String tenant, Supplier<T> work) {
-        contextHolder.set(new RequestUserContext(userId, role, tenant));
-        try {
-            return work.get();
-        } finally {
-            contextHolder.clear();
-        }
     }
 }

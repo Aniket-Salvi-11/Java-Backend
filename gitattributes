@@ -1,0 +1,8 @@
+# The init script in src/test/resources/db/init is copied into the Postgres container and executed
+# by psql inside Linux. Committing it with CRLF from a Windows checkout is the kind of thing that
+# only breaks in CI, so pin line endings for everything that crosses into a container.
+*.sql text eol=lf
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.java text eol=lf

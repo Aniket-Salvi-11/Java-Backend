@@ -1,11 +1,9 @@
 name: verify
 
-# Runs the full build including the Testcontainers integration tests
-# (TenantIsolationIT + RepositoryTenantIsolationIT) on Linux, where Docker is
-# native and Testcontainers works without the Docker-Desktop-on-Windows
-# named-pipe / API-version problems. This is the authoritative gate for the
-# tenant-isolation proof - a green run here is the evidence that RLS holds,
-# including through Hibernate.
+# Runs the full build including the Testcontainers integration tests on Linux, where Docker is
+# native and Testcontainers works without the Docker-Desktop-on-Windows named-pipe / API-version
+# problems. This is the authoritative gate for the tenant-isolation proof - a green run here is the
+# evidence that RLS holds, including through Hibernate.
 
 on:
   push:
@@ -16,6 +14,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
@@ -27,15 +26,38 @@ jobs:
           java-version: "21"
           cache: maven
 
-      # ubuntu-latest ships with Docker already running, so Testcontainers
-      # finds it via the default unix socket - no DOCKER_HOST, no api.version
-      # pinning, none of the Windows workarounds are needed here.
+      # Pulling the image up front separates "Docker Hub was slow or rate-limited" from "the test
+      # failed", which are otherwise indistinguishable in a Testcontainers startup timeout.
+      - name: Pre-pull the Postgres image
+        run: docker pull postgres:16-alpine
+
+      # ubuntu-latest ships with Docker already running, so Testcontainers finds it via the default
+      # unix socket - no DOCKER_HOST, no api.version pinning, none of the Windows workarounds.
       - name: Build and run all tests (unit + integration)
         run: mvn --batch-mode --no-transfer-progress verify
 
-      - name: Upload failsafe reports on failure
+      # Printed inline so a failed run can be diagnosed straight from the job log rather than by
+      # downloading the artifact - it matters when CI is the only place the suite can run.
+      - name: Print test reports on failure
+        if: failure()
+        run: |
+          echo "=================== FAILSAFE ==================="
+          for f in target/failsafe-reports/*.txt; do
+            [ -e "$f" ] || continue
+            echo "----- $f -----"; cat "$f"
+          done
+          echo "=================== SUREFIRE ==================="
+          for f in target/surefire-reports/*.txt; do
+            [ -e "$f" ] || continue
+            echo "----- $f -----"; cat "$f"
+          done
+
+      - name: Upload reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: failsafe-reports
-          path: target/failsafe-reports/
+          name: test-reports
+          path: |
+            target/failsafe-reports/
+            target/surefire-reports/
+          if-no-files-found: ignore
