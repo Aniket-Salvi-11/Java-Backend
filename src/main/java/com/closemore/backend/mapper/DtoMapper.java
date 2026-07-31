@@ -1,10 +1,14 @@
 package com.closemore.backend.mapper;
 
 import com.closemore.backend.domain.ContactEntity;
+import com.closemore.backend.domain.DealEntity;
+import com.closemore.backend.domain.LineItemEntity;
 import com.closemore.backend.domain.PipelineEntity;
 import com.closemore.backend.domain.ProductEntity;
 import com.closemore.backend.domain.UserEntity;
 import com.closemore.backend.dto.ContactResponse;
+import com.closemore.backend.dto.DealResponse;
+import com.closemore.backend.dto.LineItemResponse;
 import com.closemore.backend.dto.PipelineResponse;
 import com.closemore.backend.dto.ProductResponse;
 import com.closemore.backend.dto.UserResponse;
@@ -75,6 +79,43 @@ public final class DtoMapper {
                 e.getPipelineId(),
                 e.getPipelineName(),
                 e.getStagesJson()
+        );
+    }
+
+    public static DealResponse toDealResponse(DealEntity e) {
+        return new DealResponse(
+                e.getDealId(),
+                e.getDealName(),
+                e.getAssociatedContactId(),
+                e.getPipelineId(),
+                e.getCurrentStage(),
+                e.getDealValue(),
+                e.getExpectedCloseDate(),
+                e.getProbabilityPercentage(),
+                e.getWinLossReason(),
+                e.getOwnerId(),
+                e.getStatus(),
+                e.getDealSource(),
+                e.getCreatedAt(),
+                e.getUpdatedAt(),
+                e.getArr(),
+                e.getTcv(),
+                e.getTlv(),
+                e.getCommission(),
+                e.getPartnerCommission(),
+                e.getDistributorCommission()
+        );
+    }
+
+    public static LineItemResponse toLineItemResponse(LineItemEntity e) {
+        return new LineItemResponse(
+                e.getLineItemId(),
+                e.getDealId(),
+                e.getProductId(),
+                e.getQuantity(),
+                e.getUnitPriceAtSale(),
+                e.getDiscountAmount(),
+                e.getTotalLineValue()
         );
     }
 }
