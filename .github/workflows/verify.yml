@@ -5,9 +5,14 @@ name: verify
 # problems. This is the authoritative gate for the tenant-isolation proof - a green run here is the
 # evidence that RLS holds, including through Hibernate.
 
+# On my Local device ( Aniket ), Docker is having some problem, So all are Run on CI of Github through Action Button 
+# On CI it gived Green Run
+
 on:
   push:
     branches: [ "**" ]
+  paths-ignore:
+      - '**.md'
   pull_request:
     branches: [ "**" ]
 
