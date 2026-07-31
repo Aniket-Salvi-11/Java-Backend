@@ -26,8 +26,7 @@ class RlsWiringPreconditionsIT extends AbstractRlsIT {
 
     /** The tables V3/V4 are responsible for. A new tenant-scoped table belongs on this list. */
     private static final String TENANT_TABLES =
-            "'users','contacts','deals','line_items','deal_contacts','activities',"
-                    + "'activity_attachments','events_log'";
+            "'users','contacts','deals','line_items','deal_contacts','activities','activity_attachments'";
 
     @Autowired
     JdbcTemplate jdbcTemplate;
