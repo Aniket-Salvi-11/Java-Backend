@@ -18,9 +18,6 @@ starts at **Phase 0 - Foundation**.
 long comment at the top of that class and in `CloseMoreBackendApplication`. Verified by
 `TenantIsolationIT`.
 
-<<<<<<< ours
-## Explicitly deferred to later phases (Not build these yet)
-=======
 ## Running Phase 0 locally
 
 Requires Docker (for Testcontainers) and a JDK 17+.
@@ -84,8 +81,9 @@ Two beans exist only to make the Phase 0 shortcut impossible to ship:
   committed to the second. Phase 3 scope and timeline differ substantially depending on which one
   is authoritative - the Build Plan omits Tasks, Dashboard, Auth and Admin entirely.
 
+  ABOVE ALL QUESTIONS ARE RESOLVED AND WE ARE FOLLOWING MIGRATION PLAN ( NOT BUILD PLAN )
+
 ## Explicitly deferred to later phases (do not build these yet)
->>>>>>> theirs
 
 - Real authentication (header-trust vs. JWT - Finding 2, Phase 2)
 - Password hashing (Finding 1, Phase 2)
