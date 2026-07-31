@@ -18,9 +18,6 @@ starts at **Phase 0 - Foundation**.
 long comment at the top of that class and in `CloseMoreBackendApplication`. Verified by
 `TenantIsolationIT`.
 
-<<<<<<< ours
-## Explicitly deferred to later phases (Not build these yet)
-=======
 ## Running Phase 0 locally
 
 Requires Docker (for Testcontainers) and a JDK 17+.
@@ -52,6 +49,10 @@ Five things, each guarding a specific way the RLS mechanism can break:
 | `aRequestWithNoUserContextSeesNothing` | An accidentally permissive RLS policy. Documents the safe failure mode as an assertion, not a comment. |
 | `sessionVariablesDoNotSurviveOntoTheNextRequestOnTheSameConnection` | `set_config`'s transaction-local flag being dropped, or the connection being released before COMMIT. |
 | `aspectRefusesToRunOutsideARealTransaction` | The advice ordering contract (`@EnableTransactionManagement(order = 0)` + `@Order(1)`) inverting. |
+
+When the isolation ITs fail, read `RlsWiringPreconditionsIT` first. It asserts the
+plumbing (non-superuser role, no ownership, RLS enabled+forced) rather than the
+behaviour, so its failures name the actual cause.
 
 ## Phase 0 safety guards (read before removing anything)
 
@@ -85,7 +86,6 @@ Two beans exist only to make the Phase 0 shortcut impossible to ship:
   is authoritative - the Build Plan omits Tasks, Dashboard, Auth and Admin entirely.
 
 ## Explicitly deferred to later phases (do not build these yet)
->>>>>>> theirs
 
 - Real authentication (header-trust vs. JWT - Finding 2, Phase 2)
 - Password hashing (Finding 1, Phase 2)

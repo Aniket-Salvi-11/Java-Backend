@@ -47,6 +47,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO closemore_app;
 
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO closemore_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT EXECUTE ON FUNCTIONS TO closemore_app;
+
 -- The blanket GRANT above also hit Flyway's own bookkeeping table. The
 -- application has no business reading or writing it, and revoking proves the
 -- grant is scoped rather than accidental.
