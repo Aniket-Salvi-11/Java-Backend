@@ -5,16 +5,22 @@ name: verify
 # problems. This is the authoritative gate for the tenant-isolation proof - a green run here is the
 # evidence that RLS holds, including through Hibernate.
 
-# On my Local device ( Aniket ), Docker is having some problem, So all are Run on CI of Github through Action Button 
-# On CI it gived Green Run
-
 on:
   push:
     branches: [ "**" ]
-  paths-ignore:
+    # paths-ignore must be nested INSIDE push (same indent as branches), not alongside it under
+    # `on:`. Getting that wrong produces "Invalid workflow file ... A sequence was not expected"
+    # and GitHub refuses to run the workflow at all - which looks like a build failure but means
+    # no build happened, so the previous commit's status tells you nothing about the new code.
+    #
+    # Note this only skips a run when EVERY changed file matches. A commit touching both a .md and
+    # a .java file still runs, which is the behaviour you want.
+    paths-ignore:
       - '**.md'
   pull_request:
     branches: [ "**" ]
+    paths-ignore:
+      - '**.md'
 
 jobs:
   verify:
