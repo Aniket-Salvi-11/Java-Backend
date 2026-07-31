@@ -1,13 +1,17 @@
 package com.closemore.backend.mapper;
 
 import com.closemore.backend.domain.ContactEntity;
+import com.closemore.backend.domain.DealContactEntity;
 import com.closemore.backend.domain.DealEntity;
+import com.closemore.backend.domain.DealTeamMemberEntity;
 import com.closemore.backend.domain.LineItemEntity;
 import com.closemore.backend.domain.PipelineEntity;
 import com.closemore.backend.domain.ProductEntity;
 import com.closemore.backend.domain.UserEntity;
 import com.closemore.backend.dto.ContactResponse;
+import com.closemore.backend.dto.DealContactResponse;
 import com.closemore.backend.dto.DealResponse;
+import com.closemore.backend.dto.DealTeamMemberResponse;
 import com.closemore.backend.dto.LineItemResponse;
 import com.closemore.backend.dto.PipelineResponse;
 import com.closemore.backend.dto.ProductResponse;
@@ -116,6 +120,21 @@ public final class DtoMapper {
                 e.getUnitPriceAtSale(),
                 e.getDiscountAmount(),
                 e.getTotalLineValue()
+        );
+    }
+
+    public static DealContactResponse toDealContactResponse(DealContactEntity e) {
+        return new DealContactResponse(
+                e.getId().getDealId(),
+                e.getId().getContactId(),
+                e.isPrimary()
+        );
+    }
+
+    public static DealTeamMemberResponse toDealTeamMemberResponse(DealTeamMemberEntity e) {
+        return new DealTeamMemberResponse(
+                e.getId().getDealId(),
+                e.getId().getUserId()
         );
     }
 }
