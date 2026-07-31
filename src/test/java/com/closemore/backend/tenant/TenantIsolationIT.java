@@ -3,7 +3,9 @@ package com.closemore.backend.tenant;
 import com.closemore.backend.context.RequestUserContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -97,6 +99,102 @@ class TenantIsolationIT extends AbstractRlsIT {
         } finally {
             contextHolder.clear();
         }
+    }
+
+    // ----------------------------------------------------------------------------------------
+    // Regression guards for V10 (events_log RLS) and V11 (users policy tightening).
+    // Each of these FAILED before those migrations: the first two returned every row in the
+    // database regardless of tenant.
+    // ----------------------------------------------------------------------------------------
+
+    @Test
+    void theUserDirectoryIsTenantScoped() {
+        int asAcme = asTenant("user-a", "Sales_Rep", "Acme",
+                () -> probeService.countVisibleUsers());
+        int asGlobex = asTenant("user-b", "Sales_Rep", "Globex",
+                () -> probeService.countVisibleUsers());
+
+        assertThat(asAcme).isEqualTo(1);
+        assertThat(asGlobex).isEqualTo(1);
+    }
+
+    @Test
+    void aRequestWithNoUserContextCannotEnumerateTheUserDirectory() {
+        contextHolder.clear();
+
+        // V4's policy ended with "OR current_setting(...) IS NULL OR ... = ''", so this returned
+        // every user in every tenant. V11 removes that clause.
+        assertThat(probeService.countVisibleUsers()).isZero();
+    }
+
+    @Test
+    void theAuditTrailIsTenantScoped() {
+        List<String> asAcme = asTenant("user-a", "Sales_Rep", "Acme",
+                () -> probeService.visibleAuditActorIds());
+        List<String> asGlobex = asTenant("user-b", "Sales_Rep", "Globex",
+                () -> probeService.visibleAuditActorIds());
+
+        assertThat(asAcme).containsOnly("user-a");
+        assertThat(asGlobex).containsOnly("user-b");
+    }
+
+    @Test
+    void aRequestWithNoUserContextSeesNoAuditTrail() {
+        contextHolder.clear();
+
+        assertThat(probeService.visibleAuditActorIds()).isEmpty();
+    }
+
+    @Test
+    void aTenantCannotForgeAnAuditEntryAgainstAnotherTenantsUser() {
+        // NOTE ON THE ASSERTION STYLE, because the obvious version of this test is wrong:
+        //
+        // An RLS WITH CHECK violation is SQLSTATE 42501. Spring's SQLStateSQLExceptionTranslator
+        // reads the class code "42", finds it in BAD_SQL_GRAMMAR_CODES, and returns
+        // `new BadSqlGrammarException(task, sql, ex)` - whose constructor is the ONE branch in
+        // that translator that does not call buildMessage(), so it drops ex.getMessage()
+        // entirely. Every sibling branch keeps it. The Postgres text therefore exists only on
+        // the cause, and hasMessageContaining() - which inspects only the top-level message -
+        // cannot see it.
+        //
+        // hasStackTraceContaining() renders the full trace including "Caused by:" lines, so it
+        // matches. Asserting the specific Postgres wording (rather than just the exception type)
+        // matters here: BadSqlGrammarException is also what genuinely malformed SQL produces, so
+        // the type alone would let a broken INSERT masquerade as a passing security test.
+        assertThatThrownBy(() -> asTenant("user-a", "Sales_Rep", "Acme",
+                () -> {
+                    probeService.writeAuditEvent("user-b", "contact-b");
+                    return null;
+                }))
+                .as("WITH CHECK on events_log_rls_policy must reject this")
+                .isInstanceOf(DataAccessException.class)
+                .hasStackTraceContaining("new row violates row-level security policy");
+    }
+
+    @Test
+    void aTenantCanStillWriteItsOwnAuditEntries() {
+        asTenant("user-a", "Sales_Rep", "Acme", () -> {
+            probeService.writeAuditEvent("user-a", "contact-a");
+            return null;
+        });
+
+        assertThat(asTenant("user-a", "Sales_Rep", "Acme",
+                () -> probeService.visibleAuditActorIds()))
+                .containsOnly("user-a");
+    }
+
+    @Test
+    void theLoginDoorResolvesAUserWithoutOpeningTheDirectory() {
+        contextHolder.clear();
+
+        // The narrow SECURITY DEFINER lookup V11 adds so authentication still works pre-tenant.
+        assertThat(probeService.loginLookupOrganization("A-Owner@Example.com"))
+                .as("case-insensitive, mirroring the original LOWER(\"Email\") login query")
+                .isEqualTo("Acme");
+        assertThat(probeService.loginLookupOrganization("nobody@example.com")).isNull();
+
+        // ...and the function's bypass does not leak: the directory is still shut afterwards.
+        assertThat(probeService.countVisibleUsers()).isZero();
     }
 
     private int repeatedCount() {

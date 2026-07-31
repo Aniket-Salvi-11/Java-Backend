@@ -110,6 +110,25 @@ abstract class AbstractRlsIT {
                            'Lead','Test','2026-01-01','user-b')
                         ON CONFLICT ("Contact_ID") DO NOTHING
                         """);
+                // One audit row per tenant. events_log has a SERIAL PK and no natural key, so
+                // ON CONFLICT cannot dedupe it - the NOT EXISTS guard keeps @BeforeEach idempotent
+                // now that every IT class shares one database.
+                stmt.execute("""
+                        INSERT INTO events_log
+                          ("User_ID","User_Name","Action_Type","Object_Type","Object_ID","Object_Name",
+                           "Before_State","After_State")
+                        SELECT 'user-a','A Owner','DEAL_CREATED','Deal','seed-deal-a','Acme Deal',
+                               '{}','{"tenant":"acme"}'
+                        WHERE NOT EXISTS (SELECT 1 FROM events_log WHERE "Object_ID" = 'seed-deal-a')
+                        """);
+                stmt.execute("""
+                        INSERT INTO events_log
+                          ("User_ID","User_Name","Action_Type","Object_Type","Object_ID","Object_Name",
+                           "Before_State","After_State")
+                        SELECT 'user-b','B Owner','DEAL_CREATED','Deal','seed-deal-b','Globex Deal',
+                               '{}','{"tenant":"globex"}'
+                        WHERE NOT EXISTS (SELECT 1 FROM events_log WHERE "Object_ID" = 'seed-deal-b')
+                        """);
             }
             connection.commit();
         }

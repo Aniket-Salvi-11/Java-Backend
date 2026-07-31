@@ -92,3 +92,12 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO closemore_app;
+
+-- Covers V11's auth_lookup_user_by_email. That migration deliberately grants
+-- EXECUTE to nobody (it only revokes the implicit PUBLIC grant) so it stays
+-- portable to production, where the app role has a different name. Granting it
+-- here keeps the role name confined to test resources. A default privilege and
+-- a PUBLIC grant are independent grants, so V11's REVOKE ... FROM PUBLIC does
+-- not disturb this one -- verified.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT EXECUTE ON FUNCTIONS TO closemore_app;
