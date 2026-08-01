@@ -1,5 +1,7 @@
 package com.closemore.backend.mapper;
 
+import com.closemore.backend.domain.ActivityAttachmentEntity;
+import com.closemore.backend.domain.ActivityEntity;
 import com.closemore.backend.domain.ContactEntity;
 import com.closemore.backend.domain.DealContactEntity;
 import com.closemore.backend.domain.DealEntity;
@@ -8,6 +10,8 @@ import com.closemore.backend.domain.LineItemEntity;
 import com.closemore.backend.domain.PipelineEntity;
 import com.closemore.backend.domain.ProductEntity;
 import com.closemore.backend.domain.UserEntity;
+import com.closemore.backend.dto.ActivityAttachmentResponse;
+import com.closemore.backend.dto.ActivityResponse;
 import com.closemore.backend.dto.ContactResponse;
 import com.closemore.backend.dto.DealContactResponse;
 import com.closemore.backend.dto.DealResponse;
@@ -135,6 +139,36 @@ public final class DtoMapper {
         return new DealTeamMemberResponse(
                 e.getId().getDealId(),
                 e.getId().getUserId()
+        );
+    }
+
+    public static ActivityResponse toActivityResponse(ActivityEntity e) {
+        return new ActivityResponse(
+                e.getLogId(),
+                e.getParentObjectType(),
+                e.getParentObjectId(),
+                e.getActivityType(),
+                e.getSummary(),
+                e.getDetailedDescription(),
+                e.getAttachmentUrl(),
+                e.getFollowUpDate(),
+                e.getLogDate(),
+                e.getLoggedByUserId(),
+                e.getCreatedAt(),
+                e.getUpdatedAt()
+        );
+    }
+
+    public static ActivityAttachmentResponse toActivityAttachmentResponse(ActivityAttachmentEntity e) {
+        return new ActivityAttachmentResponse(
+                e.getAttachmentId(),
+                e.getLogId(),
+                e.getFileName(),
+                e.getMimeType(),
+                e.getFileSize(),
+                e.getStoragePath(),
+                e.getUploadedByUserId(),
+                e.getUploadedAt()
         );
     }
 }
