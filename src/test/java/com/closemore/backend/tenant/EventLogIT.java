@@ -84,8 +84,19 @@ class EventLogIT extends AbstractRlsIT {
                 .isNotNull()
                 .isPositive();
         assertThat(saved.getTimestamp())
-                .as("Timestamp is insertable=false, so the database default must have applied")
+                .as("@Generated(INSERT) must SELECT the database default back onto the returned "
+                        + "entity - plain insertable=false leaves this null, which is what failed "
+                        + "the first time this test ran")
                 .isNotNull();
+
+        // Belt and braces: prove the value on the returned entity is the row's real timestamp,
+        // not something Hibernate invented client-side. Compared as Instants rather than with
+        // isEqualTo, because OffsetDateTime.equals() also compares the zone offset - two reads of
+        // the same timestamptz can differ there without differing in the instant they denote.
+        EventLogEntity reloaded = asTenant("audit-actor", "Sales_Rep", "Initech",
+                () -> readService.historyFor("Task", "generated-key-probe")).get(0);
+        assertThat(reloaded.getLogEntryId()).isEqualTo(saved.getLogEntryId());
+        assertThat(reloaded.getTimestamp().toInstant()).isEqualTo(saved.getTimestamp().toInstant());
     }
 
     @Test

@@ -9,6 +9,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.Generated;
+import org.hibernate.generator.EventType;
 
 import java.time.OffsetDateTime;
 
@@ -52,11 +54,33 @@ public class EventLogEntity {
     private Integer logEntryId;
 
     /**
-     * TIMESTAMPTZ DEFAULT now(). Database-managed, so insertable=false/updatable=false keeps
-     * Hibernate from overwriting it - an audit timestamp the application can set is not much of an
-     * audit timestamp.
+     * TIMESTAMPTZ DEFAULT now(), database-managed - an audit timestamp the application can set is
+     * not much of an audit timestamp.
+     *
+     * <p><b>@Generated, not insertable=false.</b> Both keep Hibernate from writing the column, but
+     * they differ in what happens afterwards. With plain {@code insertable=false} Hibernate omits
+     * the column from the INSERT and then never looks at it again, so the in-memory entity returned
+     * by {@code save()} still has a null timestamp even though the row in the database has one.
+     * That is a quiet trap: a service that saves an audit entry and maps the returned entity
+     * straight to a DTO would emit {@code "timestamp": null}.
+     *
+     * <p>{@code @Generated(event = INSERT)} tells Hibernate the database produces this value, so it
+     * issues a SELECT after the INSERT to read it back - the annotation's javadoc names this exact
+     * case ("a mapped column has a default value defined in DDL"). Its {@code writable} attribute
+     * defaults to false, which is why the explicit insertable/updatable flags are gone rather than
+     * merely moved: {@code @Generated} already implies them.
+     *
+     * <p>The cost is one extra SELECT per insert, which is another reason bulk audit writes belong
+     * in JdbcTemplate rather than here - see the class javadoc.
+     *
+     * <p>NOTE: the same latent trap exists on every other DB-managed timestamp in this codebase
+     * (DealEntity.createdAt/updatedAt, TaskEntity.createdAt, TaskAttachmentEntity.uploadedAt and
+     * so on). They are all currently mapped insertable=false. It has never shown up because those
+     * entities are only ever READ in the test suite, and reads populate the field from the SELECT.
+     * Worth sweeping before any of them is written through Hibernate in Phase 3.
      */
-    @Column(name = "Timestamp", insertable = false, updatable = false)
+    @Generated(event = EventType.INSERT)
+    @Column(name = "Timestamp", nullable = false)
     private OffsetDateTime timestamp;
 
     /** FK -> users(User_ID). The acting user, and the column the RLS policy joins on. */
