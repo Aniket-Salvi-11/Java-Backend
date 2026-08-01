@@ -7,6 +7,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.Generated;
+import org.hibernate.generator.EventType;
 
 import java.time.OffsetDateTime;
 
@@ -72,9 +74,22 @@ public class ContactEntity {
     @Column(name = "Org_Avatar_Data_URL")
     private String orgAvatarDataUrl;
 
-    @Column(name = "Created_At", insertable = false, updatable = false)
+    /**
+     * Database-managed. {@code @Generated(INSERT)} rather than {@code insertable = false}: both
+     * stop Hibernate writing the column, but only @Generated makes it SELECT the value back, so an
+     * entity returned from save() carries the real timestamp instead of null. See EventLogEntity
+     * for the full reasoning - that is where this trap was found.
+     */
+    @Generated(event = EventType.INSERT)
+    @Column(name = "Created_At", nullable = false)
     private OffsetDateTime createdAt;
 
-    @Column(name = "Updated_At", insertable = false, updatable = false)
+    /**
+     * Trigger-managed (update_modified_column, V5) - the trigger rewrites this on every UPDATE, so
+     * the event list includes UPDATE as well as INSERT and Hibernate re-reads it after both. With
+     * plain {@code insertable = false} an updated entity would keep its stale in-memory value.
+     */
+    @Generated(event = {EventType.INSERT, EventType.UPDATE})
+    @Column(name = "Updated_At", nullable = false)
     private OffsetDateTime updatedAt;
 }

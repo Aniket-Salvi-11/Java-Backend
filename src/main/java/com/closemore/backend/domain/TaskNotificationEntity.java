@@ -7,6 +7,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.Generated;
+import org.hibernate.generator.EventType;
 
 import java.time.OffsetDateTime;
 
@@ -54,6 +56,13 @@ public class TaskNotificationEntity {
     @Column(name = "Is_Read", nullable = false)
     private boolean read;
 
-    @Column(name = "Created_At", insertable = false, updatable = false)
+    /**
+     * Database-managed. {@code @Generated(INSERT)} rather than {@code insertable = false}: both
+     * stop Hibernate writing the column, but only @Generated makes it SELECT the value back, so an
+     * entity returned from save() carries the real timestamp instead of null. See EventLogEntity
+     * for the full reasoning - that is where this trap was found.
+     */
+    @Generated(event = EventType.INSERT)
+    @Column(name = "Created_At", nullable = false)
     private OffsetDateTime createdAt;
 }
