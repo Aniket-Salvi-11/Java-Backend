@@ -2,6 +2,7 @@ package com.closemore.backend.mapper;
 
 import com.closemore.backend.domain.ActivityAttachmentEntity;
 import com.closemore.backend.domain.ActivityEntity;
+import com.closemore.backend.domain.CommentReactionEntity;
 import com.closemore.backend.domain.ContactEntity;
 import com.closemore.backend.domain.DealContactEntity;
 import com.closemore.backend.domain.DealEntity;
@@ -9,9 +10,14 @@ import com.closemore.backend.domain.DealTeamMemberEntity;
 import com.closemore.backend.domain.LineItemEntity;
 import com.closemore.backend.domain.PipelineEntity;
 import com.closemore.backend.domain.ProductEntity;
+import com.closemore.backend.domain.TaskAttachmentEntity;
+import com.closemore.backend.domain.TaskCommentEntity;
+import com.closemore.backend.domain.TaskEntity;
+import com.closemore.backend.domain.TaskNotificationEntity;
 import com.closemore.backend.domain.UserEntity;
 import com.closemore.backend.dto.ActivityAttachmentResponse;
 import com.closemore.backend.dto.ActivityResponse;
+import com.closemore.backend.dto.CommentReactionResponse;
 import com.closemore.backend.dto.ContactResponse;
 import com.closemore.backend.dto.DealContactResponse;
 import com.closemore.backend.dto.DealResponse;
@@ -19,6 +25,10 @@ import com.closemore.backend.dto.DealTeamMemberResponse;
 import com.closemore.backend.dto.LineItemResponse;
 import com.closemore.backend.dto.PipelineResponse;
 import com.closemore.backend.dto.ProductResponse;
+import com.closemore.backend.dto.TaskAttachmentResponse;
+import com.closemore.backend.dto.TaskCommentResponse;
+import com.closemore.backend.dto.TaskNotificationResponse;
+import com.closemore.backend.dto.TaskResponse;
 import com.closemore.backend.dto.UserResponse;
 
 /**
@@ -169,6 +179,65 @@ public final class DtoMapper {
                 e.getStoragePath(),
                 e.getUploadedByUserId(),
                 e.getUploadedAt()
+        );
+    }
+
+    public static TaskResponse toTaskResponse(TaskEntity e) {
+        return new TaskResponse(
+                e.getTaskId(),
+                e.getTaskTitle(),
+                e.getDescription(),
+                e.getAssignedTo(),
+                e.getAssignedBy(),
+                e.getDueDate(),
+                e.getStatus(),
+                e.isRead(),
+                e.getCreatedAt()
+        );
+    }
+
+    public static TaskAttachmentResponse toTaskAttachmentResponse(TaskAttachmentEntity e) {
+        return new TaskAttachmentResponse(
+                e.getAttachmentId(),
+                e.getTaskId(),
+                e.getFileName(),
+                e.getMimeType(),
+                e.getFileSize(),
+                e.getStoragePath(),
+                e.getUploadedBy(),
+                e.getUploadedAt()
+        );
+    }
+
+    public static TaskCommentResponse toTaskCommentResponse(TaskCommentEntity e) {
+        return new TaskCommentResponse(
+                e.getCommentId(),
+                e.getTaskId(),
+                e.getUserId(),
+                e.getUserName(),
+                e.getContent(),
+                e.getAttachmentUrl(),
+                e.getCreatedAt()
+        );
+    }
+
+    public static CommentReactionResponse toCommentReactionResponse(CommentReactionEntity e) {
+        return new CommentReactionResponse(
+                e.getReactionId(),
+                e.getCommentId(),
+                e.getUserId(),
+                e.getEmoji()
+        );
+    }
+
+    public static TaskNotificationResponse toTaskNotificationResponse(TaskNotificationEntity e) {
+        return new TaskNotificationResponse(
+                e.getNotificationId(),
+                e.getUserId(),
+                e.getTaskId(),
+                e.getMessage(),
+                e.isRead(),
+                e.getCreatedAt()
         );
     }
 }
