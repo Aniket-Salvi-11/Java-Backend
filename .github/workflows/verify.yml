@@ -42,8 +42,35 @@ jobs:
       - name: Pre-pull the Postgres image
         run: docker pull postgres:16-alpine
 
+      # Dependency resolution is separated from the build, and retried, because Maven Central
+      # rate-limits the shared GitHub Actions IP pool with HTTP 429. That is not a build failure but
+      # it looks exactly like one - the run dies before compiling anything, on the parent POM.
+      #
+      # It bites specifically when pom.xml CHANGES: setup-java keys its cache on the hash of that
+      # file, so any dependency edit invalidates the cache and the runner tries to pull the whole
+      # tree in one burst. Steady-state runs hit the cache and never reach the network.
+      #
+      # Retried with backoff rather than failed fast, since a 429 clears on its own within minutes.
+      - name: Download dependencies (retries on Maven Central rate limits)
+        run: |
+          for attempt in 1 2 3 4; do
+            if mvn --batch-mode --no-transfer-progress \
+                   -Dmaven.wagon.http.retryHandler.count=3 \
+                   dependency:go-offline; then
+              echo "Dependencies resolved on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed (likely HTTP 429). Waiting before retrying..."
+            sleep $((attempt * 20))
+          done
+          echo "Could not resolve dependencies after 4 attempts."
+          exit 1
+
       # ubuntu-latest ships with Docker already running, so Testcontainers finds it via the default
       # unix socket - no DOCKER_HOST, no api.version pinning, none of the Windows workarounds.
+      #
+      # Not retried: by this point everything is in the local repository, so a failure here is a
+      # real test failure and re-running it would only hide flakiness.
       - name: Build and run all tests (unit + integration)
         run: mvn --batch-mode --no-transfer-progress verify
 
