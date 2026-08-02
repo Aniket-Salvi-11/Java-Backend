@@ -55,9 +55,23 @@ public class UserEntity {
     @Column(name = "Status", nullable = false)
     private String status;
 
-    /** Nullable in the schema. Never surfaced in any DTO. */
+    /**
+     * DEPRECATED - plaintext, and read only by the legacy JS backend plus the one-time migration
+     * path in LoginService. Nullable in the schema, never surfaced in any DTO. Dropped once the JS
+     * backend is retired; see V12.
+     */
     @Column(name = "Password")
     private String password;
+
+    /**
+     * BCrypt digest, added by V12. Null means this user has not logged in through the Java backend
+     * yet, and {@link #password} is still authoritative for them. Written exactly once per user by
+     * auth_store_password_hash(); see LoginService.
+     *
+     * <p>Never surfaced in any DTO - UserResponse has no field for it, deliberately.
+     */
+    @Column(name = "Password_Hash")
+    private String passwordHash;
 
     @Column(name = "Avatar_Data_URL")
     private String avatarDataUrl;
