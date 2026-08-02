@@ -66,17 +66,37 @@ by then the tenant is known and can be set.
 If the function needs to return more columns, say so and it will be widened in a follow-up
 migration rather than worked around.
 
-### Grant required
+### Grants required
 
-The migration deliberately grants `EXECUTE` to nobody, so it stays portable across environments.
-Each environment must grant it explicitly to whatever role its app connects as:
+The auth migrations deliberately grant `EXECUTE` to nobody, so they stay portable across
+environments. Each environment must grant them explicitly to whatever role its app connects as:
 
 ```sql
-GRANT EXECUTE ON FUNCTION auth_lookup_user_by_email(TEXT) TO <app_role>;
+-- V14: login and refresh lookups
+GRANT EXECUTE ON FUNCTION auth_lookup_user_by_email(TEXT)            TO <app_role>;
+GRANT EXECUTE ON FUNCTION auth_store_password_hash(TEXT, TEXT)       TO <app_role>;
+
+-- V15: sessions
+GRANT EXECUTE ON FUNCTION auth_lookup_user_by_id(TEXT)                             TO <app_role>;
+GRANT EXECUTE ON FUNCTION auth_issue_refresh_token(TEXT, TEXT, TEXT, TIMESTAMPTZ)  TO <app_role>;
+GRANT EXECUTE ON FUNCTION auth_consume_refresh_token(TEXT)                         TO <app_role>;
+GRANT EXECUTE ON FUNCTION auth_revoke_refresh_token(TEXT)                          TO <app_role>;
+GRANT EXECUTE ON FUNCTION auth_revoke_all_refresh_tokens(TEXT)                     TO <app_role>;
+GRANT EXECUTE ON FUNCTION auth_purge_expired_refresh_tokens(INTERVAL)              TO <app_role>;
 ```
 
-Without this, login fails with *permission denied for function* — in QA and production, while every
-CI test stays green.
+Without these, login fails with *permission denied for function* — in QA and production, while
+every CI test stays green. The test environment picks them up automatically via
+`ALTER DEFAULT PRIVILEGES`, which is why the gap does not show up before deployment.
+
+**`JWT_SECRET` must also be set per environment.** The default in `application.yml` is a
+placeholder and is not secret; anyone holding it can mint a token for any user in any tenant, which
+bypasses RLS entirely. It must be at least 32 bytes — the application refuses to start otherwise,
+so a missing value fails loudly rather than silently weakening the signature.
+
+**Schedule `auth_purge_expired_refresh_tokens()`.** Nothing calls it automatically. Without a
+periodic job the `refresh_tokens` table grows without bound; rows are retained past expiry on
+purpose so a rotation replay can still be observed, so a daily or weekly call is enough.
 
 ---
 
@@ -198,6 +218,8 @@ Expected: a single `9` baseline row, then `V10`, `V11`, `V12`, `V13` applied.
 | `V11__users_rls_tighten.sql` | **Breaks login** unless Step 1 has shipped. | Step 1 |
 | `V12__password_hash.sql` | None. Adds a nullable column the JS app never reads. | — |
 | `V13__email_case_uniqueness.sql` | None once it succeeds. Refuses to run while duplicates exist. | Step 2 |
+| `V14__auth_login_functions.sql` | None. Widens the V11 lookup function and adds the lazy password-migration write. Note it DROPs and recreates `auth_lookup_user_by_email` with a wider return type — if the JS backend has already adopted the 5-column version, it must be updated to the 14-column one in the same release. | — |
+| `V15__refresh_tokens.sql` | None. New table plus session functions; nothing existing reads them. | — |
 
 `V12` and `V13` are safe to deploy ahead of the Java backend and are independent of Steps 1 and 4.
 
@@ -211,22 +233,47 @@ The current authentication is an `X-User-ID` header, read in `lib/auth.ts` and t
 is nothing verifying it, so **any client can send another user's `User_ID` and become them**. That
 is the reason Phase 2 exists.
 
-The Java backend will issue a signed JWT at login, and the frontend will need to store it and send
-it as `Authorization: Bearer <token>` instead of `X-User-ID`. The response body from
-`POST /auth/login` will keep the existing `safeUser` shape, so nothing that consumes the user object
-has to change — only the transport of the credential.
+The Java backend now issues a signed JWT at login. The frontend must store it and send it as
+`Authorization: Bearer <token>` instead of `X-User-ID`. Error bodies keep the existing
+`{"error": "..."}` envelope, and the `Pending_Approval` / `Inactive` 403 messages are preserved
+verbatim, so existing error handling works unchanged.
 
-The exact contract will be circulated before that work lands. Two behaviour changes are proposed and
-are open for objection:
+### The contract
 
-1. **One error message for unknown email and wrong password.** Today the API distinguishes *"No
-   account found with that email"* from *"Incorrect password"*, which lets anyone test whether an
-   address is registered. If the UI depends on distinguishing these, say so now.
-2. **`Avatar_Data_URL` dropped from the login response.** It is an inline base64 image sent on every
-   login. If the UI needs it immediately after login rather than fetching it separately, say so.
+```
+POST /api/auth/login     {"Email": "...", "Password": "..."}
+POST /api/auth/refresh   {"refreshToken": "..."}
+POST /api/auth/logout    {"refreshToken": "..."}   -> 204
+```
 
-The `Pending_Approval` and `Inactive` status responses — HTTP 403 with *"Your account is pending
-System Administrator approval."* and *"Account is inactive"* — are being preserved verbatim.
+Login and refresh both return:
+
+```json
+{
+  "accessToken": "...",
+  "accessTokenExpiresAt": "2026-08-02T18:30:00Z",
+  "refreshToken": "...",
+  "refreshTokenExpiresAt": "2026-08-09T18:00:00Z",
+  "user": { ...the existing safeUser object, unchanged... }
+}
+```
+
+Three things the frontend must handle:
+
+1. **The user object is nested under `user`.** Previously the response body WAS safeUser. The object
+   itself is unchanged — it is one level deeper.
+2. **Refresh tokens rotate.** Every call to `/refresh` returns a NEW refresh token and invalidates
+   the one presented. The stored copy must be replaced each time; reusing the old value fails by
+   design, because that is what makes a stolen token detectable.
+3. **Refresh proactively.** The access token lives 30 minutes. Use `accessTokenExpiresAt` to renew
+   shortly before it lapses rather than waiting for a 401 — otherwise users see a failed request
+   mid-task.
+
+Unchanged on purpose, and deliberately NOT improved in this phase: the distinct *"No account found
+with that email"* versus *"Incorrect password"* messages, and `Avatar_Data_URL` in the user object.
+Both are worth revisiting later — the first lets anyone test whether an address is registered, the
+second sends an inline base64 image on every login — but both are frontend-visible changes and
+Phase 2 is deliberately making none.
 
 ---
 
