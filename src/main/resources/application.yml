@@ -20,6 +20,31 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # QA and production already carry the schema, created by the legacy project's own
+    # 001-008 .sql files, and have no flyway_schema_history table. Without a baseline Flyway
+    # would treat them as empty and re-run V1 onward against live data. V1-V9 are equivalent
+    # to 001-008, so those environments are already at 9 - set these THERE, not here, and
+    # verify flyway_schema_history afterwards. See docs/PHASE2_CUTOVER.md step 4.
+    #
+    #   baseline-on-migrate: true
+    #   baseline-version: 9
+
+jwt:
+  # Chosen deliberately: see docs/PHASE2_CUTOVER.md. 30 minutes is short enough that revoking a
+  # session takes effect almost immediately (deleting the refresh token stops new access tokens,
+  # but cannot cancel one already issued), and long enough to be irrelevant to the user - the
+  # client refreshes in the background, so a long deal is never interrupted.
+  access-token-ttl: 30m
+  # A week between password prompts. This is the token that server-side logout actually revokes.
+  refresh-token-ttl: 7d
+  issuer: closemore-backend
+  # HMAC signing key. MUST be at least 32 bytes: NimbusJwtEncoder rejects anything shorter for
+  # HS256, so a short secret fails fast at startup rather than silently weakening the signature.
+  #
+  # The default below exists so tests and local runs work with no setup. It is NOT a secret and
+  # every environment must override JWT_SECRET - anyone holding this value can mint a token for
+  # any user in any tenant, which bypasses the entire RLS design.
+  secret: ${JWT_SECRET:dev-only-insecure-signing-key-change-me-32b}
 
 server:
   port: 8080

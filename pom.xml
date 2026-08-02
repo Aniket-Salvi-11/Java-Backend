@@ -15,7 +15,7 @@
     <artifactId>closemore-backend</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>closemore-backend</name>
-    <description>CloseMore CRM - Java backend (fresh Spring Boot build, Phase 0)</description>
+    <description>CloseMore CRM - Java backend (fresh Spring Boot build)</description>
 
     <properties>
         <java.version>21</java.version>
@@ -49,6 +49,23 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
+        </dependency>
+
+        <!--
+            JWT encoding and decoding (Phase 2). This is the Spring Security module Spring's own
+            resource-server support uses; it brings nimbus-jose-jwt transitively and provides
+            NimbusJwtEncoder / NimbusJwtDecoder.
+
+            Deliberately NOT spring-boot-starter-oauth2-resource-server: that would install its own
+            SecurityFilterChain and take over request authentication, which is a much larger change
+            than issuing and verifying a token ourselves. It is also deliberately not a third-party
+            JWT library - this artifact is managed by the Spring Security BOM that Boot 3.3.4
+            imports, so there is no version to pin here and no chance of it drifting out of step
+            with the security starter already in this file.
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-jose</artifactId>
         </dependency>
 
         <!-- Required for the @Around advice that sets the RLS session variables -->
