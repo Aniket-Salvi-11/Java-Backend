@@ -110,7 +110,12 @@ public class JwtService {
         try {
             Jwt jwt = decoder.decode(tokenValue);
 
-            if (!properties.issuer().equals(jwt.getIssuer() == null ? null : jwt.getIssuer().toString())) {
+            // getClaimAsString, NOT getIssuer(). Jwt.getIssuer() routes through getClaimAsURL,
+            // which asserts the value converts to a java.net.URL and throws IllegalArgumentException
+            // when it does not. Our issuer is the opaque string "closemore-backend", so getIssuer()
+            // would blow up on every valid token - and with an exception type this catch block does
+            // not handle, surfacing as a 500 rather than a 401.
+            if (!properties.issuer().equals(jwt.getClaimAsString("iss"))) {
                 throw new AuthenticationException(401, "Invalid token");
             }
             return jwt;

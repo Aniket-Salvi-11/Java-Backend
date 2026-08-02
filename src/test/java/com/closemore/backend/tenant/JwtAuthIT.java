@@ -4,7 +4,6 @@ import com.closemore.backend.auth.AuthService;
 import com.closemore.backend.auth.AuthenticationException;
 import com.closemore.backend.auth.IssuedTokens;
 import com.closemore.backend.auth.JwtService;
-import com.closemore.backend.auth.RefreshTokenService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,8 +13,11 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.time.temporal.ChronoUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,9 +40,6 @@ class JwtAuthIT extends AbstractRlsIT {
 
     @Autowired
     JwtService jwtService;
-
-    @Autowired
-    RefreshTokenService refreshTokenService;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -235,7 +234,7 @@ class JwtAuthIT extends AbstractRlsIT {
         assertThat(storedHash)
                 .as("a leak of refresh_tokens must not yield usable tokens")
                 .isNotEqualTo(tokens.refreshToken())
-                .isEqualTo(RefreshTokenService.hash(tokens.refreshToken()))
+                .isEqualTo(sha256Hex(tokens.refreshToken()))
                 .hasSize(64);
     }
 
@@ -261,6 +260,23 @@ class JwtAuthIT extends AbstractRlsIT {
     // pass or fail for reasons unrelated to what it claims to check. Same trap V14's
     // auth_store_password_hash exists to avoid.
     // ---------------------------------------------------------------------------------------
+
+    /**
+     * SHA-256 computed here rather than by calling RefreshTokenService's own helper.
+     *
+     * <p>Deliberate: a test that hashes with the same code it is checking can only prove the
+     * service agrees with itself. Recomputing it independently proves the stored value really is
+     * SHA-256 of the issued token, so swapping the algorithm - or accidentally storing something
+     * else entirely - fails here.
+     */
+    private static String sha256Hex(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
 
     private void setStatus(String userId, String status) {
         executeAsSuperuser("UPDATE users SET \"Status\" = '" + status
