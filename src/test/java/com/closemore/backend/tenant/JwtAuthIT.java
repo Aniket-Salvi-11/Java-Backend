@@ -19,6 +19,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.time.temporal.ChronoUnit;
+import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
@@ -98,18 +99,57 @@ class JwtAuthIT extends AbstractRlsIT {
                 .isBefore(Instant.now().plus(8, ChronoUnit.DAYS));
     }
 
+    /**
+     * The property the whole design rests on: a client cannot edit the tenant it claims to belong
+     * to. This rewrites the payload to say "Acme" while keeping the original signature, which is
+     * exactly what an attacker would try.
+     *
+     * <p>NOTE ON HOW NOT TO WRITE THIS TEST. The first version flipped the last character of the
+     * signature, which turned out to be FLAKY rather than wrong. An HS256 signature is 32 bytes;
+     * base64url-encoded without padding that is 43 characters, but 43 x 6 = 258 bits for 256 bits
+     * of data - so the final character carries only 4 significant bits and its low 2 bits are
+     * slack. Characters A, B, C and D therefore all decode to identical bytes. Flipping A to B
+     * changed nothing, the signature verified, no exception was thrown, and the test failed only
+     * on the ~6% of runs where the signature happened to end in that equivalence class.
+     * Tamper the payload instead: every bit of it is signed.
+     */
     @Test
-    void aTamperedTokenIsRejected() {
+    void thePayloadCannotBeRewrittenToClaimAnotherTenant() {
         IssuedTokens tokens = authService.login("tok@tokenco.example", "tok-pw").tokens();
 
-        // Flip the last character of the signature. The payload is untouched, so this fails only
-        // because the signature no longer matches - which is the whole basis of the design.
-        String value = tokens.accessToken();
-        char last = value.charAt(value.length() - 1);
-        String tampered = value.substring(0, value.length() - 1) + (last == 'A' ? 'B' : 'A');
+        String[] parts = tokens.accessToken().split("\\.");
+        String payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+        assertThat(payload).contains("Tokenco");
+
+        String forgedPayload = payload.replace("Tokenco", "Acme");
+        String forgedToken = parts[0] + "."
+                + Base64.getUrlEncoder().withoutPadding()
+                        .encodeToString(forgedPayload.getBytes(StandardCharsets.UTF_8))
+                + "." + parts[2];
 
         AuthenticationException ex = catchThrowableOfType(
-                () -> jwtService.verify(tampered), AuthenticationException.class);
+                () -> jwtService.verify(forgedToken), AuthenticationException.class);
+
+        assertThat(ex)
+                .as("swapping the tenant claim must invalidate the signature")
+                .isNotNull();
+        assertThat(ex.getStatus()).isEqualTo(401);
+    }
+
+    @Test
+    void aTokenSignedWithTheWrongKeyIsRejected() {
+        IssuedTokens tokens = authService.login("tok@tokenco.example", "tok-pw").tokens();
+
+        // Replace the signature wholesale with a well-formed but incorrect one. Deterministic,
+        // unlike editing a single character of the real signature.
+        String[] parts = tokens.accessToken().split("\\.");
+        byte[] bogus = new byte[32];
+        java.util.Arrays.fill(bogus, (byte) 0x5A);
+        String forged = parts[0] + "." + parts[1] + "."
+                + Base64.getUrlEncoder().withoutPadding().encodeToString(bogus);
+
+        AuthenticationException ex = catchThrowableOfType(
+                () -> jwtService.verify(forged), AuthenticationException.class);
 
         assertThat(ex).isNotNull();
         assertThat(ex.getStatus()).isEqualTo(401);
