@@ -23,7 +23,8 @@ public record SessionResponse(
         Instant refreshTokenExpiresAt,
         UserResponse user
 ) {
-    static SessionResponse of(IssuedTokens tokens, UserResponse user) {
+    /** Public because AuthController lives in another package. */
+    public static SessionResponse of(IssuedTokens tokens, UserResponse user) {
         return new SessionResponse(
                 tokens.accessToken(),
                 tokens.accessTokenExpiresAt(),
