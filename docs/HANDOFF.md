@@ -17,8 +17,10 @@ Paste this at the start of a new session, along with the repo link.
 - **One new technique per batch.** Small batches have been the difference between first-push-green
   and multi-cycle debugging.
 - **Propose before deviating from the plan.** Changes should read as loophole fixes, not redesigns.
-- Authoritative plan: **Migration Plan v3** — like-for-like port of 57 endpoints across 12 resource
-  groups. The Build Plan PDF is not what this repo implements.
+- Authoritative plan: **Migration Plan v5** — like-for-like port of 58 endpoints across 12 resource
+  groups. The Build Plan PDF is not what this repo implements. v4 added cloud portability for the
+  OCI deployment and database access rules for the Sprint 4 AI orchestrator; v5 corrected the API
+  inventory. Read v5, not v3.
 
 ## Stack
 
@@ -35,17 +37,24 @@ CI: `.github/workflows/verify.yml`, runs `mvn verify` on Linux.
 | Phase 0 — Foundation | Complete |
 | Phase 1 — Entities | Complete. 16/16 tables have entity + repository + DTO |
 | Phase 2 — Auth | Complete. JWT, bcrypt, server-side sessions |
-| Phase 3 — Endpoints | **Not started.** The 57-endpoint port |
+| Phase 3 — Endpoints | **In progress.** 17 of 58 done — Contacts (5), Deals (13, minus 1 overlap) |
 
-**102 integration tests green.** Run with `mvn verify` (NOT `mvn test` — Surefire's default
-includes match none of the `*IT` classes).
+**189 tests green** — 176 integration, 13 unit. Run with `mvn verify` (NOT `mvn test` — Surefire's
+default includes match none of the `*IT` classes; `mvn test` silently skips the entire isolation
+proof and reports success).
+
+Branch: `phase3-endpoints`, off `phase2-auth`.
 
 ## Test classes
 
 `RlsWiringPreconditionsIT` 6, `TenantIsolationIT` 13, `RepositoryTenantIsolationIT` 3,
 `ReferenceDataIT` 5, `DealsIsolationIT` 7, `DealTeamAccessIT` 7, `ActivitiesIsolationIT` 7,
 `TasksIsolationIT` 6, `EventLogIT` 5, `GeneratedTimestampsIT` 2, `LoginIT` 10, `JwtAuthIT` 14,
-`AuthEndpointIT` 9, `JwtFilterIT` 8.
+`AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37.
+
+Unit: `RbacServiceTest` 13, `DealStageRulesTest` 7. Note `DealStageRulesTest` lives in
+`src/test/java/com/closemore/backend/service/` — a third test package alongside `rbac` and
+`tenant` — and runs under Surefire, not Failsafe, because its name ends in `Test`.
 
 **When tests go red, read `RlsWiringPreconditionsIT` first** — it asserts the plumbing, so its
 failures name the actual cause. "Broken policy" and "wrong connection" look identical elsewhere.
@@ -103,7 +112,18 @@ Request flow: `JwtAuthenticationFilter` → `RequestUserContextHolder` → `Tena
     workflow retries dependency resolution 4× with backoff.
 12. **Cross-package visibility.** Package-private members in `auth` called from `controller` have
     broken the build twice. Check before shipping.
-13. Pageable.unpaged(sort) is not a sorted query. SimpleJpaRepository.findAll(Pageable) short-circuits an unpaged Pageable to new PageImpl<>(findAll()), discarding the Sort. Use the findAll(Sort) / findBy...(x, Sort) overloads for unpaginated lists. Fails silently — all rows return, only ORDER BY vanishes.
+
+13. **`Pageable.unpaged(sort)` is not a sorted query.** `SimpleJpaRepository.findAll(Pageable)`
+    short-circuits an unpaged `Pageable` to `new PageImpl<>(findAll())` and discards the `Sort`.
+    Every row still returns, the count is right, the response shape is right, nothing throws —
+    only the `ORDER BY` vanishes and Postgres returns rows in whatever order it likes. Cost one red
+    CI run. Use the `findAll(Sort)` / `findBy...(x, Sort)` overloads for unpaginated lists. The
+    `findAll(Specification, Sort)` overload used by `DealService` does NOT have this short-circuit.
+
+14. **The `events_log` RLS error in CI logs is expected.** `EventLogIT
+    .aTenantCannotWriteAnAuditEntryAgainstAnotherTenantsUser` deliberately triggers
+    `new row violates row-level security policy for table "events_log"` to prove V10's `WITH CHECK`
+    works, and `RlsPostgres` forwards Postgres stderr into the report on purpose. Do not chase it.
 
 ---
 
@@ -149,21 +169,67 @@ response.
 
 ---
 
-## Phase 3 — suggested starting point
+## Phase 3 — decisions taken, and where it stands
 
-Port the 57 endpoints across 12 resource groups. No services or controllers exist yet except auth.
+58 endpoints across 12 resource groups (57 ported like-for-like plus `POST /api/auth/refresh`,
+which has no JS equivalent and exists because Finding 2 was resolved with tokens). 17 done.
 
-Decisions to make early, because retrofitting is expensive:
+### Decisions already made — do not relitigate these without saying so
 
-- **Pagination.** Nothing paginates. Add `Pageable` to the first service, before the pattern is
-  copied 11 times.
-- **API versioning.** `/api/v1/...` costs nothing now and is awkward later — mobile clients keep
-  calling old endpoints for months.
-- **Avatar columns.** `Avatar_Data_URL` stores inline base64 images. A 50-contact list is several
-  MB of JSON, most of it images. Object storage + URL is the usual fix.
+- **List response shape: bare array by default, envelope on opt-in.** `GET /api/v1/contacts`
+  returns a plain JSON array exactly as the Next.js backend does. Adding `?page=` or `?size=`
+  switches to `PageResponse`. This was a project decision, not a convenience: a client receiving an
+  object where it expected an array gets an empty screen rather than an error, and a bad mobile
+  release is gated by store review. Clients adopt pagination per screen on their own schedule.
+- **API versioning: `/api/v1/...` for every resource group.** Auth stays on `/api/auth/*`
+  unversioned — those paths are already in `JwtAuthenticationFilter.PUBLIC_PATH_PREFIXES` and
+  already shipped in the JS frontend, so moving them is a coordinated release.
+- **A sortable-column allowlist per service.** Two jobs: an unknown property makes Spring Data throw
+  during query derivation (a 500 for a caller-side typo), and the avatar columns are deliberately
+  excluded so nobody can make Postgres collate megabytes of base64 across a table.
+- **`spring.data.web.pageable.max-page-size: 100`** caps the opt-in paginated path only. The
+  unpaginated path is uncapped, matching the JS backend.
+- **Single-record `GET /{id}` added** to Contacts, and to be added to Products and Pipelines. Not in
+  the JS inventory, added deliberately: once a list arrives 25 rows at a time, a deep link or push
+  notification pointing at one record would otherwise have to walk pages to find it.
+- **Task attachments get no endpoints**, task notifications ride inside `GET /api/tasks`, tasks get
+  no DELETE, and `state.ts` `loadState`/`replaceState` is dropped in favour of Flyway seeding.
 
-Suggested order: Contacts (simplest policy, one `EXISTS` on `Owner_ID`), then Deals (deepest
-joins), then Activities, Tasks, Admin.
+### The patterns every remaining group copies
+
+Read `ContactService` and `DealService` before writing the next one. Between them they establish:
+
+- Class-level `@Transactional` on the service — `TenantContextAspect` only sets the session
+  variables for transactional methods, and a non-transactional one returns an empty list rather than
+  erroring.
+- `CurrentUserService.require()` at the top of every method, converting the request context into an
+  `AuthenticatedUser`.
+- `saveAndFlush`, not `save`, on writes — the statement must reach the database inside the method so
+  an RLS refusal surfaces there rather than at commit, where it escapes the handling.
+- The audit snapshot is taken BEFORE the setters run. The entity is managed, so capturing after
+  means both states record the new values and the diff is lost permanently.
+- 404, never 403, for a row RLS filtered out. Distinguishing them turns the id space into an
+  enumeration oracle.
+- `AuditService` has no `@Transactional` of its own, deliberately — it joins the caller's
+  transaction so the row and its audit entry commit together or not at all.
+
+### Visibility is not the same shape for every table
+
+Contacts are one hop: you own the row or you do not, so `requireOwnerOrAdmin` and a
+`findByOwnerId` filter match the policy. Deals are three routes — owner, team member, or
+Admin/Executive — because V9 extended the policy. Using the contacts pattern on deals would be
+STRICTER than the database, and team deals would silently vanish from the list. Check the live
+policy in `pg_policies` before assuming which shape applies.
+
+### Remaining tranches
+
+3. Activities + Attachments (8) — includes the `IngestionEventPublisher` interface Migration Plan
+   v4 calls for: two implementations, AWS SQS and OCI Queue, selected by configuration.
+4. Tasks (7) — comments, reactions, notifications embedded in the task response.
+5. Users + Auth (7) — `registration-policy` and `signup` are still owed; login, logout and refresh
+   already exist from Phase 2, which makes that group look finished when it is not.
+6. Products, Pipelines (8) — plus the two single-record routes.
+7. Dashboard, Admin, Health (7).
 
 **Defence in depth:** RLS enforces tenancy, but keep `RbacService` checks in the service layer too —
 mirroring the JS original. If a policy is ever dropped by a bad migration, the application check
@@ -180,3 +246,19 @@ still holds, and vice versa.
   activity history. Looks like an oversight in the original; pinned by a test.
 - Tasks are tenant-only (no owner clause) — any Sales_Rep sees every task in the org.
 - Plaintext `Password` column still exists for the legacy JS backend. Drop it once that is retired.
+
+### Open items raised by Phase 3, needing answers from outside the Java repo
+
+- **Five questions for the JS codebase.** Whether `task_attachments` was ever exposed by a route;
+  whether notifications have a read endpoint; whether tasks were meant to be deletable; whether
+  Contacts/Products/Pipelines have single-record routes the inventory missed; and whether
+  `loadState`/`replaceState` is called from a route or only a seed script.
+- **Deal financials are not recalculated.** Only `Deal_Value` is, from the sum of line items. The
+  formulas for ARR, TCV, TLV and the three commission fields are not documented anywhere this port
+  can see, and guessing would produce wrong revenue figures that look plausible. They stay
+  caller-supplied via `PUT /api/v1/deals/{id}` until someone confirms the rules.
+- **`GET /deals/{id}/story` cannot include tasks.** The plan describes it as "deal + its notes +
+  tasks", but `tasks` carries no reference to a deal anywhere in the schema — no column, no join
+  table. Implemented as audit trail + activities; the gap is documented in `DealStoryResponse`.
+- **Migration Plan is at Revision 5.** It now covers cloud portability for the OCI deployment,
+  database access for the Sprint 4 AI orchestrator, and the API inventory corrections above.
