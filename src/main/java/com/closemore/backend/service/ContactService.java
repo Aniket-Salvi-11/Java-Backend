@@ -84,10 +84,16 @@ public class ContactService {
         AuthenticatedUser user = currentUserService.require();
         requireSortablePropertiesOnly(sort);
 
-        return visibleContacts(user, Pageable.unpaged(sort))
-                .getContent().stream()
-                .map(DtoMapper::toContactResponse)
-                .toList();
+        // findAll(Sort) and findByOwnerId(String, Sort), NOT the Pageable methods with
+        // Pageable.unpaged(sort). SimpleJpaRepository.findAll(Pageable) short-circuits an unpaged
+        // Pageable to new PageImpl<>(findAll()) and drops the Sort on the floor - every row still
+        // comes back, so nothing throws and the count is right, but the ORDER BY is gone. See
+        // ContactRepository.
+        List<ContactEntity> contacts = rbacService.canViewAll(user)
+                ? contactRepository.findAll(sort)
+                : contactRepository.findByOwnerId(user.userId(), sort);
+
+        return contacts.stream().map(DtoMapper::toContactResponse).toList();
     }
 
     /** GET /api/v1/contacts?page=... - the opt-in paginated form. */

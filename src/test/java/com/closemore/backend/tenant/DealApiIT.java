@@ -201,6 +201,21 @@ class DealApiIT extends AbstractWebIT {
     // --- filters, sorting, pagination ---------------------------------------------------------
 
     @Test
+    void theUnpaginatedDealListIsOrderedByTheDefaultSort() throws Exception {
+        // DealService goes through findAll(Specification, Sort), which is a different overload from
+        // the one that silently dropped the sort in ContactService. Asserted here anyway, because
+        // "this overload behaves differently" is exactly the kind of assumption that is worth a
+        // test rather than a comment.
+        mockMvc.perform(get("/api/v1/deals")
+                        .header("Authorization", "Bearer " + tokenFor("admin@dealco.example")))
+                .andExpect(status().isOk())
+                // Default sort is expectedCloseDate ascending: 06-30, 07-31, 08-31.
+                .andExpect(jsonPath("$[0].dealId").value("dl-d1"))
+                .andExpect(jsonPath("$[1].dealId").value("dl-d2"))
+                .andExpect(jsonPath("$[2].dealId").value("dl-d3"));
+    }
+
+    @Test
     void theListCanBeFilteredByStage() throws Exception {
         mockMvc.perform(get("/api/v1/deals?stage=Negotiation")
                         .header("Authorization", "Bearer " + tokenFor("admin@dealco.example")))

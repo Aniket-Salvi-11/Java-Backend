@@ -122,6 +122,48 @@ class ContactApiIT extends AbstractWebIT {
     }
 
     @Test
+    void theUnpaginatedListIsFullyOrderedByTheDefaultSort() throws Exception {
+        // Regression. The first version of this service passed Pageable.unpaged(sort) to
+        // findAll(Pageable), which SimpleJpaRepository short-circuits to new PageImpl<>(findAll()) -
+        // discarding the Sort. Every row still came back, so the count and the shape were both
+        // right and nothing threw; only the ORDER BY disappeared. Asserting the whole sequence
+        // rather than just the first element is what makes that unmissable.
+        mockMvc.perform(get("/api/v1/contacts")
+                        .header("Authorization", "Bearer " + tokenFor("admin@contactco.example")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].lastName").value("Alpha"))
+                .andExpect(jsonPath("$[1].lastName").value("Bravo"))
+                .andExpect(jsonPath("$[2].lastName").value("Charlie"))
+                .andExpect(jsonPath("$[3].lastName").value("Delta"))
+                .andExpect(jsonPath("$[4].lastName").value("Echo"))
+                .andExpect(jsonPath("$[5].lastName").value("Foxtrot"))
+                .andExpect(jsonPath("$[6].lastName").value("Golf"));
+    }
+
+    @Test
+    void anExplicitSortIsHonouredOnTheUnpaginatedPath() throws Exception {
+        // The other half of the same regression: a caller-supplied ?sort= has to survive too, and
+        // descending order proves the sort is genuinely applied rather than coinciding with the
+        // order Postgres happens to return.
+        mockMvc.perform(get("/api/v1/contacts?sort=lastName,desc")
+                        .header("Authorization", "Bearer " + tokenFor("admin@contactco.example")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].lastName").value("Golf"))
+                .andExpect(jsonPath("$[6].lastName").value("Alpha"));
+    }
+
+    @Test
+    void theOwnerScopedListIsOrderedToo() throws Exception {
+        // A rep goes through findByOwnerId rather than findAll, so it is a second code path with
+        // its own opportunity to lose the sort.
+        mockMvc.perform(get("/api/v1/contacts")
+                        .header("Authorization", "Bearer " + tokenFor("rep@contactco.example")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].lastName").value("Alpha"))
+                .andExpect(jsonPath("$[4].lastName").value("Echo"));
+    }
+
+    @Test
     void askingForAPageSwitchesToTheEnvelope() throws Exception {
         mockMvc.perform(get("/api/v1/contacts?page=0&size=3")
                         .header("Authorization", "Bearer " + tokenFor("admin@contactco.example")))

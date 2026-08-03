@@ -3,7 +3,10 @@ package com.closemore.backend.repository;
 import com.closemore.backend.domain.ContactEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
 
 /**
  * Spring Data JPA repository for contacts.
@@ -17,15 +20,24 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * redundantly with RLS on purpose - defence in depth, mirroring how the JS app also checks ownership
  * in code even though RLS would enforce it anyway.
  *
- * Phase 3 replaced the List-returning signature with a Pageable-accepting one rather than keeping
- * both. Nothing referenced the List version; leaving it would have left two ways to run the same
- * query, one of which loads every row a rep owns into memory with no ceiling.
+ * TWO OVERLOADS OF findByOwnerId, AND THE DIFFERENCE MATTERS.
  *
- * Pageable.unpaged() is a valid argument and returns everything, which is how the unpaginated list
- * path is served. The COUNT query behind a paged call runs under the same policy as the SELECT, so
- * totalElements is the number of rows this caller may see, not the number that exist.
+ * The Sort overload serves the unpaginated list; the Pageable overload serves the ?page= form.
+ * Passing Pageable.unpaged(sort) to the paged method instead is NOT equivalent, and this cost a red
+ * CI run: SimpleJpaRepository.findAll(Pageable) short-circuits on an unpaged Pageable to
+ *
+ *     new PageImpl<>(findAll())
+ *
+ * which discards the Sort entirely. The rows all come back, so the count is right and nothing
+ * throws - only the ORDER BY vanishes, and Postgres returns them in whatever order it likes. The
+ * symptom is a list that sorts randomly, which gets reported as a frontend bug.
+ *
+ * The COUNT query behind a paged call runs under the same policy as the SELECT, so totalElements is
+ * the number of rows this caller may see, not the number that exist.
  */
 public interface ContactRepository extends JpaRepository<ContactEntity, String> {
+
+    List<ContactEntity> findByOwnerId(String ownerId, Sort sort);
 
     Page<ContactEntity> findByOwnerId(String ownerId, Pageable pageable);
 }
