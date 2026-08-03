@@ -1,6 +1,7 @@
 package com.closemore.backend.repository;
 
 import com.closemore.backend.domain.EventLogEntity;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -16,11 +17,18 @@ import java.util.List;
  * deal") and mirrors ActivityRepository's polymorphic finder: both halves of the discriminator are
  * needed, since ids from different tables could collide.
  *
+ * <p>The Sort-accepting overload exists for the deal story endpoint. Ordering in SQL rather than in
+ * Java matters here because an audit trail read without an explicit ORDER BY comes back in whatever
+ * order Postgres finds convenient, which is stable enough in testing to look correct and free to
+ * change under load.
+ *
  * <p>RLS scopes all of these to the caller's organisation, via the acting user.
  */
 public interface EventLogRepository extends JpaRepository<EventLogEntity, Integer> {
 
     List<EventLogEntity> findByObjectTypeAndObjectId(String objectType, String objectId);
+
+    List<EventLogEntity> findByObjectTypeAndObjectId(String objectType, String objectId, Sort sort);
 
     List<EventLogEntity> findByUserId(String userId);
 }
