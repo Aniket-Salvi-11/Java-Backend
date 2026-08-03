@@ -17,6 +17,28 @@ spring:
         globally_quoted_identifiers: true
         physical_naming_strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
 
+  data:
+    web:
+      pageable:
+        # Applies to every paginated endpoint. @PageableDefault on a controller method overrides
+        # default-page-size for that method; max-page-size cannot be overridden that way, which is
+        # the point of setting it here.
+        default-page-size: 25
+        # A hard ceiling on ?size=. Requests above it are clamped, not rejected.
+        #
+        # Not a general politeness limit - specifically about Avatar_Data_URL and
+        # Org_Avatar_Data_URL, which store images inline as base64. A contact row carrying two of
+        # them is measured in megabytes, so an uncapped ?size=100000 is a single request asking the
+        # server to build a response of a size nothing in the stack is prepared for. Object storage
+        # plus a URL is the real fix and is a phase of its own; this stops it getting worse.
+        #
+        # Note this cap applies only to the OPT-IN paginated path. A caller sending no ?page= or
+        # ?size= still receives every visible row, matching the Next.js backend.
+        max-page-size: 100
+        # Explicit because the two conventions are indistinguishable from a response body, and
+        # getting it wrong silently skips or repeats a page. page=0 is the first page.
+        one-indexed-parameters: false
+
   flyway:
     enabled: true
     locations: classpath:db/migration
