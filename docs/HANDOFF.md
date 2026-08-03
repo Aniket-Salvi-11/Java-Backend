@@ -103,6 +103,7 @@ Request flow: `JwtAuthenticationFilter` → `RequestUserContextHolder` → `Tena
     workflow retries dependency resolution 4× with backoff.
 12. **Cross-package visibility.** Package-private members in `auth` called from `controller` have
     broken the build twice. Check before shipping.
+13. Pageable.unpaged(sort) is not a sorted query. SimpleJpaRepository.findAll(Pageable) short-circuits an unpaged Pageable to new PageImpl<>(findAll()), discarding the Sort. Use the findAll(Sort) / findBy...(x, Sort) overloads for unpaginated lists. Fails silently — all rows return, only ORDER BY vanishes.
 
 ---
 
