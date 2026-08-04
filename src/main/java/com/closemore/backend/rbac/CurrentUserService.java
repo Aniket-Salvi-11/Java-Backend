@@ -42,4 +42,24 @@ public class CurrentUserService {
             throw new RbacException(403, "Unrecognised role");
         }
     }
+
+    /**
+     * The caller's organisation.
+     *
+     * <p>Separate from {@link #require()} because {@link AuthenticatedUser} deliberately does not
+     * carry the tenant: RBAC decisions are about identity and role, and RLS gets the tenant from the
+     * session variables rather than from Java. The one thing that genuinely needs it in code is an
+     * outbound ingestion event, whose consumer runs with no request context and no session variables
+     * and therefore cannot derive the organisation from anything else.
+     *
+     * <p>Read from the same context the session variables were set from, so an event's tenant always
+     * matches the tenant its row was written under.
+     */
+    public String currentTenant() {
+        RequestUserContext context = contextHolder.get();
+        if (context == null) {
+            throw new RbacException(401, "Not authenticated");
+        }
+        return context.organizationNameOrEmpty();
+    }
 }

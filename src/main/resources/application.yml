@@ -39,6 +39,15 @@ spring:
         # getting it wrong silently skips or repeats a page. page=0 is the first page.
         one-indexed-parameters: false
 
+  servlet:
+    multipart:
+      # Explicit rather than defaulted. These two are the only ceiling on how much memory one
+      # request can make the application allocate: the attachment controller reads each part fully
+      # into a byte[] before handing it to the service, because the stream is tied to the request
+      # and the service holds it across a transaction boundary and a storage write.
+      max-file-size: 25MB
+      max-request-size: 100MB
+
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -74,3 +83,24 @@ server:
 logging:
   level:
     com.closemore.backend: DEBUG
+closemore:
+  storage:
+    # local | s3 | oci. Only 'local' has an implementation today: S3 and OCI Object Storage belong
+    # with the deployment work, and adding either now means a vendor SDK in pom.xml for code nothing
+    # can exercise - which also invalidates the Maven cache and provokes the Maven Central 429s that
+    # docs/HANDOFF.md gotcha 11 records.
+    provider: local
+    local:
+      # Relative to the working directory. Production and QA must set an absolute path on a volume
+      # that survives a redeploy - a container's writable layer does not, and the database rows would
+      # outlive the files they point at.
+      root: ./uploads
+
+  ingestion:
+    # logging | sqs | oci. 'logging' writes the event and stops there, which is correct for local
+    # development and CI. The queue implementations are configuration, not code changes - that is
+    # the entire point of IngestionEventPublisher being an interface from the first caller onward.
+    #
+    # Both are named here rather than only the one that exists, so the property reads as a choice
+    # with a default rather than a placeholder someone has to guess the shape of.
+    publisher: logging
