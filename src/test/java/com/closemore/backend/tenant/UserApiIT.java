@@ -93,9 +93,12 @@ class UserApiIT extends AbstractWebIT {
         mockMvc.perform(get("/api/v1/users?page=0&size=2")
                         .header("Authorization", "Bearer " + tokenFor("admin@userco.example")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content").isArray())
-                .andExpect(jsonPath("$.content", hasSize(2)))
-                .andExpect(jsonPath("$.totalElements").value(4));
+                // "items", not "content" - PageResponse is this project's own record, deliberately
+                // not Spring Data's PageImpl, whose JSON has changed shape between versions.
+                .andExpect(jsonPath("$.items").isArray())
+                .andExpect(jsonPath("$.items", hasSize(2)))
+                .andExpect(jsonPath("$.totalElements").value(4))
+                .andExpect(jsonPath("$.hasNext").value(true));
     }
 
     @Test
@@ -144,7 +147,7 @@ class UserApiIT extends AbstractWebIT {
                         .header("Authorization", "Bearer " + tokenFor("admin@userco.example")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1))
-                .andExpect(jsonPath("$.content[0].email").value("pending@userco.example"));
+                .andExpect(jsonPath("$.items[0].email").value("pending@userco.example"));
     }
 
     @Test
