@@ -1,6 +1,7 @@
 package com.closemore.backend.repository;
 
 import com.closemore.backend.domain.TaskCommentEntity;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -9,4 +10,7 @@ import java.util.List;
 public interface TaskCommentRepository extends JpaRepository<TaskCommentEntity, String> {
 
     List<TaskCommentEntity> findByTaskId(String taskId);
+
+    /** Oldest first for a conversation, so callers pass an explicit Sort rather than hoping. */
+    List<TaskCommentEntity> findByTaskId(String taskId, Sort sort);
 }
