@@ -540,6 +540,55 @@ class TaskApiIT extends AbstractWebIT {
     }
 
     @Test
+    void aNotificationCanBeWrittenForAColleagueButNotAcrossTenants() throws Exception {
+        // Pins V16 at the policy level rather than through an endpoint.
+        //
+        // V8's WITH CHECK was identical to its USING clause, so the only notification a user could
+        // insert was one addressed to themselves - and a notification exists to tell somebody else
+        // something. Every notify() in TaskService refused at the database. V16 widens the write
+        // side to the organisation and leaves reads strictly per-user.
+        //
+        // Asserted directly against the app role because no endpoint can express the cross-tenant
+        // case: create() rejects a foreign assignee before the insert is attempted. Without this
+        // test, widening the write check would have no coverage of the boundary it kept.
+        try (Connection connection = DriverManager.getConnection(
+                RlsPostgres.instance().getJdbcUrl(),
+                RlsPostgres.APP_USER, RlsPostgres.APP_PASSWORD)) {
+            connection.setAutoCommit(false);
+            try (Statement stmt = connection.createStatement()) {
+                // set_config(..., true) is transaction-local, which is why autoCommit is off.
+                stmt.execute("SELECT set_config('app.current_user_id','tk-boss',true)");
+                stmt.execute("SELECT set_config('app.current_user_role','Sales_Rep',true)");
+                stmt.execute("SELECT set_config('app.current_user_tenant','Taskco',true)");
+
+                // A colleague in the same organisation: permitted.
+                stmt.execute("""
+                        INSERT INTO task_notifications ("Notification_ID","User_ID","Task_ID",
+                          "Message","Is_Read")
+                        VALUES ('tk-n-ok','tk-doer','tk-t1','Written for a colleague',FALSE)
+                        """);
+
+                // user-a belongs to Acme, seeded by AbstractRlsIT. Must still be refused.
+                boolean refused = false;
+                try {
+                    stmt.execute("""
+                            INSERT INTO task_notifications ("Notification_ID","User_ID","Task_ID",
+                              "Message","Is_Read")
+                            VALUES ('tk-n-bad','user-a','tk-t1','Cross tenant',FALSE)
+                            """);
+                } catch (java.sql.SQLException expected) {
+                    refused = true;
+                }
+                if (!refused) {
+                    throw new AssertionError(
+                            "V16 widened the write check too far - a cross-tenant notification was accepted");
+                }
+            }
+            connection.rollback();
+        }
+    }
+
+    @Test
     void aRequestWithNoTokenIsRefused() throws Exception {
         mockMvc.perform(get("/api/v1/tasks"))
                 .andExpect(status().isUnauthorized());

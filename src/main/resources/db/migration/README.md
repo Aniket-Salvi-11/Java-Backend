@@ -27,10 +27,18 @@ SELECT tablename, policyname, qual FROM pg_policies WHERE schemaname = 'public';
 | `activities_rls_policy` | V3, V4 | — | **V4** |
 | `activity_attachments_rls_policy` | V3, V4 | — | **V4** |
 | `deal_team_members_rls_policy` | V9 | — | **V9** |
-| `tasks_rls_policy` and the rest of the Tasks group | V8 | — | **V8** |
+| `tasks_rls_policy`, `task_comments_rls_policy`, `task_attachments_rls_policy`, `comment_reactions_rls_policy` | V8 | — | **V8** |
+| `task_notifications_rls_policy` | V8 | V16 | **V16** |
 | `events_log_rls_policy` | V10 | — | **V10** |
 
 V3 is superseded wholesale by V4 — every policy it creates is recreated there. Treat V3 as history.
+
+**V16 changed only the WITH CHECK half of `task_notifications_rls_policy`.** V8 gave it a write
+check identical to its read check — `"User_ID" = app.current_user_id` — which meant the only
+notification a user could insert was one addressed to themselves, and a notification exists to tell
+somebody else something. Every write refused at the database. V16 widens the write side to any
+recipient in the caller's organisation and leaves USING untouched, so reads stay strictly per-user:
+this is still the one table where a colleague, or an Admin, cannot see your rows.
 
 ## What the supersessions actually changed
 
