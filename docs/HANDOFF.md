@@ -37,9 +37,9 @@ CI: `.github/workflows/verify.yml`, runs `mvn verify` on Linux.
 | Phase 0 — Foundation | Complete |
 | Phase 1 — Entities | Complete. 16/16 tables have entity + repository + DTO |
 | Phase 2 — Auth | Complete. JWT, bcrypt, server-side sessions |
-| Phase 3 — Endpoints | **In progress.** 41 of 58 done. Tranches 1-4 and 5a green. Next: tranche 5b (Users API) |
+| Phase 3 — Endpoints | **In progress.** 47 of 58 done. Tranches 1-5 green. Next: tranche 6 |
 
-**Last green: 274 tests** (tranches 1-4 and 5a) — 254 Failsafe ITs plus 20 Surefire units.
+**Last green: 307 tests** (tranches 1-5) — 287 Failsafe ITs plus 20 Surefire units.
 Earlier versions of this file claimed 265. That was wrong: `grep -c '@Test'` also matches
 `@TestPropertySource`, which appears once each in `ActivityApiIT` and `AttachmentApiIT`. Count from
 the Failsafe summary line, not from grep. Run with `mvn verify` (NOT `mvn test` — Surefire's
@@ -54,7 +54,7 @@ Branch: `phase3-endpoints`, off `phase2-auth`.
 `ReferenceDataIT` 5, `DealsIsolationIT` 7, `DealTeamAccessIT` 7, `ActivitiesIsolationIT` 7,
 `TasksIsolationIT` 6, `EventLogIT` 5, `GeneratedTimestampsIT` 2, `LoginIT` 10, `JwtAuthIT` 14,
 `AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37, `ActivityApiIT` 25,
-`AttachmentApiIT` 18, `TaskApiIT` 31, `SignupApiIT` 11.
+`AttachmentApiIT` 18, `TaskApiIT` 31, `SignupApiIT` 11, `UserApiIT` 33.
 
 Unit: `RbacServiceTest` 13, `DealStageRulesTest` 7. Note `DealStageRulesTest` lives in
 `src/test/java/com/closemore/backend/service/` — a third test package alongside `rbac` and
@@ -133,6 +133,21 @@ Request flow: `JwtAuthenticationFilter` → `RequestUserContextHolder` → `Tena
     shipped with both identical, which made the notification feature impossible - you could only
     insert a row addressed to yourself. When adding a policy, ask separately "who may read this" and
     "who may write this"; for anything that exists to inform another user, those answers differ.
+
+20. **Authorisation is not always per endpoint — sometimes it is per field.** `PUT
+    /api/v1/users/{id}` is the first place this bites: anyone may edit their own profile, but
+    email, role and status are Admin-only *whoever owns the row*. The naive reading ("your row,
+    your edit") lets a Sales_Rep promote themselves to Admin, and no role-per-endpoint check
+    catches it because the endpoint IS permitted for them. `RbacService` has no method for this
+    shape; the check lives in `UserService.update` and is pinned by
+    `UserApiIT.aSalesRepCannotPromoteThemselves`. Expect the same shape wherever an endpoint
+    updates a resource the caller partly owns.
+
+21. **A narrow status check can be the only thing standing between two endpoints.** `POST
+    /users/{id}/reject` deletes, and v5 says no route removes an established user. Both statements
+    are true only while reject refuses every status but `Pending_Approval` — drop that check and
+    the route v5 says does not exist is this one, reachable with any user id. Pinned by
+    `rejectCannotDeleteAnEstablishedUser`.
 
 19. **An unauthenticated write needs a SECURITY DEFINER function, not a widened policy.** Signup
     creates the first row a caller will ever own, so there is no tenant context and every JPA route
@@ -265,7 +280,7 @@ policy in `pg_policies` before assuming which shape applies.
    to the deployment work so no vendor SDK enters pom.xml.
 4. Tasks (7) — DONE. The notification write path needs a hand-written INSERT; see gotcha 17.
 5. ~~Users + Auth (7)~~ **8, not 7** — v5's "Auth API — 4 endpoints" header is stale; it lists
-   five. Split into 5a (auth registration, DONE) and 5b (Users API, 6 endpoints, next) — `registration-policy` and `signup` are still owed; login, logout and refresh
+   five. Split into 5a (auth registration) and 5b (Users API) — both DONE — `registration-policy` and `signup` are still owed; login, logout and refresh
    already exist from Phase 2, which makes that group look finished when it is not.
 6. Products, Pipelines (8) — plus the two single-record routes.
 7. Dashboard, Admin, Health (7).
@@ -384,6 +399,10 @@ would add grants to the cutover checklist.
 - **`GET /api/auth/registration-policy` tells an anonymous caller whether an organisation name
   exists.** Unavoidable if the form is to adapt itself, and it reveals nothing that attempting a
   signup would not. Booleans only, one exact name, not enumerable in bulk. Needs QA sign-off.
+- **`POST /api/v1/users` sets no password.** An Admin-created account has no credential until
+  its owner sets one, and v5 inventories no route that sets another user's password. If the JS
+  backend has an invite or password-reset flow, it is missing from the inventory and needs adding
+  as scope rather than invented here.
 - **The `/api/v1` prefix is not in v5.** Every one of v5's 58 inventory rows is unversioned
   `/api/...`, including `/api/auth/login`. The `/api/v1/...` decision was taken in Phase 3 and is
   recorded above, but it means 53 routes move at cutover — the same coordinated-release cost the

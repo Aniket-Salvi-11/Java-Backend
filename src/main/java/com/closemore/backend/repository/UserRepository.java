@@ -1,8 +1,12 @@
 package com.closemore.backend.repository;
 
 import com.closemore.backend.domain.UserEntity;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -40,4 +44,25 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<UserEntity, String> {
 
     Optional<UserEntity> findByEmailIgnoreCase(String email);
+
+    /**
+     * Role/status filters for GET /api/v1/users, added in tranche 5b.
+     *
+     * <p>Paged variants exist so the paginated form can filter in the database. Filtering a page
+     * after it is fetched returns fewer rows than the caller asked for and makes totalElements
+     * wrong - it would count the unfiltered set.
+     *
+     * <p>No tenant predicate on any of these, deliberately. A user's tenant IS
+     * Organization_Name, and V11's policy already matches it against app.current_user_tenant, so
+     * "all users" here means "all users in my organisation". Adding an explicit filter would
+     * duplicate the policy and drift from it.
+     */
+    Page<UserEntity> findByRole(String role, Pageable pageable);
+
+    Page<UserEntity> findByStatus(String status, Pageable pageable);
+
+    Page<UserEntity> findByRoleAndStatus(String role, String status, Pageable pageable);
+
+    /** Unpaged, for GET /api/v1/users/pending. Sort, not Pageable - see the note above. */
+    List<UserEntity> findByStatus(String status, Sort sort);
 }

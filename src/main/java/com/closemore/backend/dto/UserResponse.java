@@ -1,16 +1,13 @@
 package com.closemore.backend.dto;
 
-import java.time.OffsetDateTime;
-
 /**
- * Outbound DTO for a user. The Password field on UserEntity is deliberately absent here - entities
- * are never serialized directly (Migration Plan Section 3 principle, and the original's
- * `const { Password, ...safeUser } = user` in login/route.ts). This record IS that safeUser shape.
+ * The safe user projection - everything about a user EXCEPT password material.
  *
- * Field names use the JSON the frontend already consumes. If the existing API returns PascalCase
- * keys, that is a parity question to confirm against real payloads in Phase 3 - this record uses
- * camelCase for now and is the single place to change if the contract says otherwise. Flagged, not
- * assumed.
+ * <p>Neither {@code Password} nor {@code Password_Hash} appears here and neither ever should. This
+ * is the only shape in which a user leaves the Users API, so the omission is the enforcement: there
+ * is no code path that could serialise a hash by accident, because the field does not exist on the
+ * type. AuthenticatedUserRow is a deliberately separate type for the login path, which does need
+ * the hash - see its javadoc.
  */
 public record UserResponse(
         String userId,
@@ -19,11 +16,11 @@ public record UserResponse(
         String email,
         String role,
         String status,
-        String phoneNumber,
         String organizationName,
+        String phoneNumber,
+        String avatarDataUrl,
         String residentialAddress,
         String officeAddress,
-        OffsetDateTime createdAt,
-        OffsetDateTime updatedAt
-) {
+        String createdAt,
+        String updatedAt) {
 }
