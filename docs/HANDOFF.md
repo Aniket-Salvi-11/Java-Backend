@@ -37,9 +37,9 @@ CI: `.github/workflows/verify.yml`, runs `mvn verify` on Linux.
 | Phase 0 — Foundation | Complete |
 | Phase 1 — Entities | Complete. 16/16 tables have entity + repository + DTO |
 | Phase 2 — Auth | Complete. JWT, bcrypt, server-side sessions |
-| Phase 3 — Endpoints | **In progress.** 39 of 58 done. Tranches 1-4 green. Next: tranche 5 |
+| Phase 3 — Endpoints | **In progress.** 41 of 58 done. Tranches 1-4 and 5a green. Next: tranche 5b (Users API) |
 
-**Last green: 263 tests** (tranches 1-4) — 243 Failsafe ITs plus 20 Surefire units.
+**Last green: 274 tests** (tranches 1-4 and 5a) — 254 Failsafe ITs plus 20 Surefire units.
 Earlier versions of this file claimed 265. That was wrong: `grep -c '@Test'` also matches
 `@TestPropertySource`, which appears once each in `ActivityApiIT` and `AttachmentApiIT`. Count from
 the Failsafe summary line, not from grep. Run with `mvn verify` (NOT `mvn test` — Surefire's
@@ -54,7 +54,7 @@ Branch: `phase3-endpoints`, off `phase2-auth`.
 `ReferenceDataIT` 5, `DealsIsolationIT` 7, `DealTeamAccessIT` 7, `ActivitiesIsolationIT` 7,
 `TasksIsolationIT` 6, `EventLogIT` 5, `GeneratedTimestampsIT` 2, `LoginIT` 10, `JwtAuthIT` 14,
 `AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37, `ActivityApiIT` 25,
-`AttachmentApiIT` 18, `TaskApiIT` 31.
+`AttachmentApiIT` 18, `TaskApiIT` 31, `SignupApiIT` 11.
 
 Unit: `RbacServiceTest` 13, `DealStageRulesTest` 7. Note `DealStageRulesTest` lives in
 `src/test/java/com/closemore/backend/service/` — a third test package alongside `rbac` and
@@ -133,6 +133,14 @@ Request flow: `JwtAuthenticationFilter` → `RequestUserContextHolder` → `Tena
     shipped with both identical, which made the notification feature impossible - you could only
     insert a row addressed to yourself. When adding a policy, ask separately "who may read this" and
     "who may write this"; for anything that exists to inform another user, those answers differ.
+
+19. **An unauthenticated write needs a SECURITY DEFINER function, not a widened policy.** Signup
+    creates the first row a caller will ever own, so there is no tenant context and every JPA route
+    is closed. V17 follows V11/V14: one narrow function per job, `SET app.bypass_rls`, `REVOKE ALL
+    ... FROM PUBLIC`, granted per environment. The role/status branch lives inside the function
+    rather than in Java on purpose — deciding in Java means SELECT-then-INSERT, and two concurrent
+    first signups for one organisation would both become Admin. `pg_advisory_xact_lock` on the
+    organisation name closes the window without blocking other tenants.
 
 17. **`INSERT ... RETURNING` must satisfy the SELECT policy, not just `WITH CHECK`.** Under RLS you
     may only use `RETURNING` on a row you are allowed to read back. Hibernate adds
@@ -256,7 +264,8 @@ policy in `pg_policies` before assuming which shape applies.
    filesystem); SQS/OCI and S3/OCI are configuration, not code changes, and were deliberately left
    to the deployment work so no vendor SDK enters pom.xml.
 4. Tasks (7) — DONE. The notification write path needs a hand-written INSERT; see gotcha 17.
-5. Users + Auth (7) — `registration-policy` and `signup` are still owed; login, logout and refresh
+5. ~~Users + Auth (7)~~ **8, not 7** — v5's "Auth API — 4 endpoints" header is stale; it lists
+   five. Split into 5a (auth registration, DONE) and 5b (Users API, 6 endpoints, next) — `registration-policy` and `signup` are still owed; login, logout and refresh
    already exist from Phase 2, which makes that group look finished when it is not.
 6. Products, Pipelines (8) — plus the two single-record routes.
 7. Dashboard, Admin, Health (7).
@@ -360,6 +369,27 @@ would add grants to the cutover checklist.
 - Plaintext `Password` column still exists for the legacy JS backend. Drop it once that is retired.
 
 ### Open items raised by Phase 3, needing answers from outside the Java repo
+
+- **The signup branch rules are derived, not specified.** v5 names three outcomes and not the
+  conditions between them. V6's comment on `users."Status"` supplies them: privileged roles wait
+  for approval, others are Active. Bootstrap — first account in an empty organisation becomes its
+  Admin — is inferred, since without it a new tenant could never onboard. **Confirm against the JS
+  implementation**, in particular whether bootstrap is per-organisation as built here or global to
+  the very first user in the system. `SignupApiIT` asserts stored Role and Status for all three
+  branches, so a wrong guess shows up as a test change, not a silent behaviour change.
+- **`POST /api/auth/signup` returns no tokens.** A Pending_Approval account must not get a session,
+  and returning tokens only sometimes would give one endpoint two response shapes. If the JS signup
+  screen expects to be logged in on success, it needs one extra call to `/api/auth/login`. Needs the
+  frontend and mobile teams.
+- **`GET /api/auth/registration-policy` tells an anonymous caller whether an organisation name
+  exists.** Unavoidable if the form is to adapt itself, and it reveals nothing that attempting a
+  signup would not. Booleans only, one exact name, not enumerable in bulk. Needs QA sign-off.
+- **The `/api/v1` prefix is not in v5.** Every one of v5's 58 inventory rows is unversioned
+  `/api/...`, including `/api/auth/login`. The `/api/v1/...` decision was taken in Phase 3 and is
+  recorded above, but it means 53 routes move at cutover — the same coordinated-release cost the
+  decision cited as its reason for leaving auth alone. If the frontend is changing request logic
+  anyway for JWT auth, folding the prefix into that change costs nothing. Someone outside this repo
+  needs to decide.
 
 - **Five questions for the JS codebase.** Whether `task_attachments` was ever exposed by a route;
   whether notifications have a read endpoint; whether tasks were meant to be deletable; whether

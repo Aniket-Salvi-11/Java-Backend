@@ -55,7 +55,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final Set<String> PUBLIC_PATH_PREFIXES = Set.of(
             "/api/auth/login",
             "/api/auth/refresh",
-            "/api/auth/logout");
+            "/api/auth/logout",
+            // Tranche 5a. Both are pre-account by definition: registration-policy is what the
+            // signup form calls to decide what to render, and signup is how an account comes to
+            // exist. Requiring a token on either would make them unreachable.
+            "/api/auth/registration-policy",
+            "/api/auth/signup");
 
     private final JwtService jwtService;
     private final RequestUserContextHolder contextHolder;
