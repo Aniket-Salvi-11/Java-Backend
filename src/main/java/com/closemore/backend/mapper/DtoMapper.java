@@ -257,29 +257,4 @@ public final class DtoMapper {
                 e.getAfterState()
         );
     }
-
-    /**
-     * The safe user projection. Password and Password_Hash are not mapped, and UserResponse has no
-     * field for them - see UserResponse.
-     *
-     * <p>Timestamps are rendered as strings, matching every other response in this project: the JS
-     * backend emits ISO-8601 strings and Section 3 commits to not changing response shapes.
-     */
-    public static UserResponse toUserResponse(UserEntity e) {
-        return new UserResponse(
-                e.getUserId(),
-                e.getFirstName(),
-                e.getLastName(),
-                e.getEmail(),
-                e.getRole(),
-                e.getStatus(),
-                e.getOrganizationName(),
-                e.getPhoneNumber(),
-                e.getAvatarDataUrl(),
-                e.getResidentialAddress(),
-                e.getOfficeAddress(),
-                e.getCreatedAt() == null ? null : e.getCreatedAt().toString(),
-                e.getUpdatedAt() == null ? null : e.getUpdatedAt().toString()
-        );
-    }
 }
