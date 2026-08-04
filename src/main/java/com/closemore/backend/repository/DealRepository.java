@@ -1,6 +1,8 @@
 package com.closemore.backend.repository;
 
 import com.closemore.backend.domain.DealEntity;
+
+import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
@@ -27,4 +29,14 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
  */
 public interface DealRepository
         extends JpaRepository<DealEntity, String>, JpaSpecificationExecutor<DealEntity> {
+
+    /**
+     * Deals sitting on one stage of one pipeline. Added in tranche 6 for the stage-rename cascade
+     * in PipelineService.update.
+     *
+     * <p>Subject to RLS like every other finder here, which is exactly the limitation documented on
+     * PipelineService.update: pipelines are global, deals are not, so this returns only the
+     * caller's organisation's deals and the reassignment stops at that boundary.
+     */
+    List<DealEntity> findByPipelineIdAndCurrentStage(String pipelineId, String currentStage);
 }

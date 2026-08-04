@@ -37,9 +37,9 @@ CI: `.github/workflows/verify.yml`, runs `mvn verify` on Linux.
 | Phase 0 — Foundation | Complete |
 | Phase 1 — Entities | Complete. 16/16 tables have entity + repository + DTO |
 | Phase 2 — Auth | Complete. JWT, bcrypt, server-side sessions |
-| Phase 3 — Endpoints | **In progress.** 47 of 58 done. Tranches 1-5 green. Next: tranche 6 |
+| Phase 3 — Endpoints | **In progress.** 57 of 58 done. Tranches 1-6 green. Next: tranche 7 |
 
-**Last green: 307 tests** (tranches 1-5) — 287 Failsafe ITs plus 20 Surefire units.
+**Last green: 347 tests** (tranches 1-6) — 327 Failsafe ITs plus 20 Surefire units.
 Earlier versions of this file claimed 265. That was wrong: `grep -c '@Test'` also matches
 `@TestPropertySource`, which appears once each in `ActivityApiIT` and `AttachmentApiIT`. Count from
 the Failsafe summary line, not from grep. Run with `mvn verify` (NOT `mvn test` — Surefire's
@@ -54,7 +54,7 @@ Branch: `phase3-endpoints`, off `phase2-auth`.
 `ReferenceDataIT` 5, `DealsIsolationIT` 7, `DealTeamAccessIT` 7, `ActivitiesIsolationIT` 7,
 `TasksIsolationIT` 6, `EventLogIT` 5, `GeneratedTimestampsIT` 2, `LoginIT` 10, `JwtAuthIT` 14,
 `AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37, `ActivityApiIT` 25,
-`AttachmentApiIT` 18, `TaskApiIT` 31, `SignupApiIT` 11, `UserApiIT` 33.
+`AttachmentApiIT` 18, `TaskApiIT` 31, `SignupApiIT` 11, `UserApiIT` 33, `ProductApiIT` 21, `PipelineApiIT` 19.
 
 Unit: `RbacServiceTest` 13, `DealStageRulesTest` 7. Note `DealStageRulesTest` lives in
 `src/test/java/com/closemore/backend/service/` — a third test package alongside `rbac` and
@@ -133,6 +133,21 @@ Request flow: `JwtAuthenticationFilter` → `RequestUserContextHolder` → `Tena
     shipped with both identical, which made the notification feature impossible - you could only
     insert a row addressed to yourself. When adding a policy, ask separately "who may read this" and
     "who may write this"; for anything that exists to inform another user, those answers differ.
+
+22. **Two tables have no RLS at all, and the Admin check is the only thing guarding them.**
+    `products` and `pipelines` are global reference data — every organisation reads and writes the
+    same rows, and there is no `Organization_Name` column to scope by. So for these two groups the
+    service-layer role check is NOT defence in depth behind a policy; remove it and nothing at the
+    database layer catches the fall. `RlsWiringPreconditionsIT.TENANT_TABLES` deliberately omits
+    both. Consequence worth internalising: an Admin in one tenant edits a catalogue and a stage
+    configuration that every tenant sees.
+
+23. **When a global table cascades into a tenant table, the cascade is silently partial.**
+    `PUT /api/v1/pipelines/{id}` reassigns deals on stage rename or removal, but pipelines have no
+    RLS and deals do — so the pipeline change applies globally while the deal updates stop at the
+    caller's organisation. Other tenants keep the old stage name. The JS backend has no RLS and
+    would update everyone's. Not fixed here: doing so needs a SECURITY DEFINER writer that crosses
+    tenants, which is a security decision nobody has taken. Raised as an open item.
 
 20. **Authorisation is not always per endpoint — sometimes it is per field.** `PUT
     /api/v1/users/{id}` is the first place this bites: anyone may edit their own profile, but
@@ -282,7 +297,9 @@ policy in `pg_policies` before assuming which shape applies.
 5. ~~Users + Auth (7)~~ **8, not 7** — v5's "Auth API — 4 endpoints" header is stale; it lists
    five. Split into 5a (auth registration) and 5b (Users API) — both DONE — `registration-policy` and `signup` are still owed; login, logout and refresh
    already exist from Phase 2, which makes that group look finished when it is not.
-6. Products, Pipelines (8) — plus the two single-record routes.
+6. Products, Pipelines (8) — DONE, plus the two single-record routes. Both groups are GLOBAL
+   reference data with no RLS; see gotcha 22. The stage cascade is the only real logic —
+   `PipelineService.update`.
 7. Dashboard, Admin, Health (7).
 
 **Defence in depth:** RLS enforces tenancy, but keep `RbacService` checks in the service layer too —
@@ -399,6 +416,16 @@ would add grants to the cutover checklist.
 - **`GET /api/auth/registration-policy` tells an anonymous caller whether an organisation name
   exists.** Unavoidable if the form is to adapt itself, and it reveals nothing that attempting a
   signup would not. Booleans only, one exact name, not enumerable in bulk. Needs QA sign-off.
+- **The pipeline stage cascade is tenant-partial, and its rename rule is a guess.** Two separate
+  questions. (1) Should an Admin editing a global pipeline be able to move other organisations'
+  deals? Today they cannot, which is the conservative reading but diverges from the JS backend.
+  (2) Renames are detected by POSITION, and only when the stage list length is unchanged — the
+  stage JSON carries no stable id, so reordering is indistinguishable from renaming. Confirm both
+  against the JS implementation. `PipelineApiIT` pins the current behaviour test by test, so a
+  wrong guess shows up as a named failure.
+- **Closed deals are exempt from the cascade.** A deal on `Closed Won`/`Closed Lost` keeps its
+  stage even when that stage is removed, leaving a dangling reference — judged better than
+  reopening closed business. Confirm this matches what the JS backend does.
 - **`POST /api/v1/users` sets no password.** An Admin-created account has no credential until
   its owner sets one, and v5 inventories no route that sets another user's password. If the JS
   backend has an invite or password-reset flow, it is missing from the inventory and needs adding
