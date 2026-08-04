@@ -37,9 +37,10 @@ CI: `.github/workflows/verify.yml`, runs `mvn verify` on Linux.
 | Phase 0 — Foundation | Complete |
 | Phase 1 — Entities | Complete. 16/16 tables have entity + repository + DTO |
 | Phase 2 — Auth | Complete. JWT, bcrypt, server-side sessions |
-| Phase 3 — Endpoints | **In progress.** 17 of 58 done — Contacts (5), Deals (13, minus 1 overlap) |
+| Phase 3 — Endpoints | **In progress.** 32 of 58 done. Tranches 1-3 green; tranche 4 is RED — see "Where tranche 4 stopped" below |
 
-**189 tests green** — 176 integration, 13 unit. Run with `mvn verify` (NOT `mvn test` — Surefire's
+**Last green: 234 tests** (tranches 1-3). Tranche 4 adds 31 more; 265 is the target once the open
+issue below is resolved. Run with `mvn verify` (NOT `mvn test` — Surefire's
 default includes match none of the `*IT` classes; `mvn test` silently skips the entire isolation
 proof and reports success).
 
@@ -50,7 +51,8 @@ Branch: `phase3-endpoints`, off `phase2-auth`.
 `RlsWiringPreconditionsIT` 6, `TenantIsolationIT` 13, `RepositoryTenantIsolationIT` 3,
 `ReferenceDataIT` 5, `DealsIsolationIT` 7, `DealTeamAccessIT` 7, `ActivitiesIsolationIT` 7,
 `TasksIsolationIT` 6, `EventLogIT` 5, `GeneratedTimestampsIT` 2, `LoginIT` 10, `JwtAuthIT` 14,
-`AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37.
+`AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37, `ActivityApiIT` 26,
+`AttachmentApiIT` 19, `TaskApiIT` 31 (tranche 4, not yet green).
 
 Unit: `RbacServiceTest` 13, `DealStageRulesTest` 7. Note `DealStageRulesTest` lives in
 `src/test/java/com/closemore/backend/service/` — a third test package alongside `rbac` and
@@ -124,6 +126,17 @@ Request flow: `JwtAuthenticationFilter` → `RequestUserContextHolder` → `Tena
     .aTenantCannotWriteAnAuditEntryAgainstAnotherTenantsUser` deliberately triggers
     `new row violates row-level security policy for table "events_log"` to prove V10's `WITH CHECK`
     works, and `RlsPostgres` forwards Postgres stderr into the report on purpose. Do not chase it.
+
+15. **A tenant-scoped table's `WITH CHECK` is not always a copy of its `USING`.** `task_notifications`
+    shipped with both identical, which made the notification feature impossible - you could only
+    insert a row addressed to yourself. When adding a policy, ask separately "who may read this" and
+    "who may write this"; for anything that exists to inform another user, those answers differ.
+
+16. **Read the failing SQL, not just the exception.** Two of the three red runs so far named neither
+    the real file nor the real cause in their top-level message. The SnakeYAML error quoted a line
+    of Java without saying which file; the RLS refusal named the table but not which of five call
+    sites. In both cases the quoted fragment was the whole diagnosis.
+
 
 ---
 
@@ -223,9 +236,11 @@ policy in `pg_policies` before assuming which shape applies.
 
 ### Remaining tranches
 
-3. Activities + Attachments (8) — includes the `IngestionEventPublisher` interface Migration Plan
-   v4 calls for: two implementations, AWS SQS and OCI Queue, selected by configuration.
-4. Tasks (7) — comments, reactions, notifications embedded in the task response.
+3. Activities + Attachments (8) — DONE. Delivered the `IngestionEventPublisher` interface Migration
+   Plan v4 calls for, plus `StorageProvider`. Both ship with one implementation (logging, local
+   filesystem); SQS/OCI and S3/OCI are configuration, not code changes, and were deliberately left
+   to the deployment work so no vendor SDK enters pom.xml.
+4. Tasks (7) — WRITTEN, RED. See "Where tranche 4 stopped" above.
 5. Users + Auth (7) — `registration-policy` and `signup` are still owed; login, logout and refresh
    already exist from Phase 2, which makes that group look finished when it is not.
 6. Products, Pipelines (8) — plus the two single-record routes.
@@ -234,6 +249,85 @@ policy in `pg_policies` before assuming which shape applies.
 **Defence in depth:** RLS enforces tenancy, but keep `RbacService` checks in the service layer too —
 mirroring the JS original. If a policy is ever dropped by a bad migration, the application check
 still holds, and vice versa.
+
+---
+
+## Where tranche 4 stopped — READ THIS FIRST
+
+Tranche 4 (Tasks, 7 endpoints) is written, committed and **red**. Two failures happened in
+sequence; the first is fully resolved, the second is not.
+
+### Failure 1 — resolved, but worth knowing
+
+`application.yml` was accidentally overwritten with the contents of `TaskRepository.java` while
+hand-placing files. Every Spring context failed to start and ~100 tests errored at once, with a
+SnakeYAML error naming neither file. Diagnosed from the quoted line ("line 12, column 34" matched
+the Javadoc colon in `TaskRepository.java` exactly). Fixed by restoring the file.
+
+**Lesson now in the workflow:** deliver each tranche as a zip that unpacks over the repo root, so
+files cannot land in the wrong place, and check `git status --short` before committing — the
+expected file count is stated per tranche.
+
+### Failure 2 — OPEN
+
+`V16__task_notifications_write_check.sql` was added and the run is still red. The output was not
+captured before the session ended, so the cause is unconfirmed.
+
+**The problem V16 addresses.** V8 gave `task_notifications` a `WITH CHECK` identical to its `USING`
+clause:
+
+```sql
+"User_ID" = current_setting('app.current_user_id', true)
+```
+
+So the only notification a user could insert was one addressed to themselves — and a notification
+exists to tell somebody *else* something. Every `notify()` call in `TaskService` writes for the
+assignee or the assigner, so every one refused with
+`new row violates row-level security policy for table "task_notifications"`. That produced exactly 5
+failures, all of them the paths where one user notifies another; the self-assign path passed, which
+confirms the diagnosis.
+
+**What V16 does.** Drops and recreates the policy with `USING` untouched and only the write side
+widened, to any recipient in the caller's organisation — derived the same way V10 derives tenancy
+for `events_log`. Reads stay strictly per-user, so this remains the one table where a colleague, and
+an Admin, cannot see your rows.
+
+**First three things to check when picking this up:**
+
+1. Did Flyway actually run V16? Look for `Migrating schema "public" to version 16` in the surefire
+   output. If absent, the file is not in `src/main/resources/db/migration/`.
+2. Is the failing test `TaskApiIT.aNotificationCanBeWrittenForAColleagueButNotAcrossTenants`? That
+   is a raw-JDBC policy assertion added alongside V16 and is not load-bearing — deleting that one
+   method leaves the other 30 intact if it is the only thing failing.
+3. Is it a different class entirely? Then it is a knock-on nobody has looked at yet.
+
+**A finding for a human, not just a test fix.** If the legacy backend is subject to this policy,
+notifications have been failing silently in production and nobody noticed. If it is not, the legacy
+backend connects as a role that bypasses RLS, which matters for a different reason. Check QA before
+cutover:
+
+```sql
+SELECT polname, pg_get_expr(polwithcheck, polrelid)
+FROM pg_policy WHERE polrelid = 'task_notifications'::regclass;
+```
+
+**The trade V16 makes,** recorded so it is not rediscovered as a hole: any user may now write a
+notification addressed to any colleague in their own organisation, with arbitrary text. That is
+exactly what the application does on their behalf and it cannot cross a tenant boundary. It does
+mean a notification is not proof of who triggered it — `events_log` is, and its own `WITH CHECK`
+ties each row to the acting user. The tighter alternative is a `SECURITY DEFINER` function like
+V14's auth lookups; it was not chosen because this project puts enforcement in policies and it would
+add grants to the cutover checklist.
+
+---
+
+## Working environment
+
+- Windows, PowerShell. `head`, `grep`, `wc` are not available — use `Get-Content -TotalCount`,
+  `Select-String`, `(Get-Content f).Count`.
+- Unpack tranche zips with `tar -xf <zip>` from the repo root. `Expand-Archive` merges awkwardly.
+- Docker is still broken locally; CI remains the only gate. A prompt for a separate session to fix
+  Docker was drafted and not yet used.
 
 ---
 
