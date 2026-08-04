@@ -410,14 +410,17 @@ public class TaskService {
         return rollups;
     }
 
+    /**
+     * Writes one notification, for somebody who is usually not the caller.
+     *
+     * <p>Goes through insertNotification() rather than saveAndFlush() because Hibernate's insert
+     * carries a RETURNING clause that RLS refuses on any row the writer cannot read back - see the
+     * comment on TaskNotificationRepository.insertNotification for the full account. Every path
+     * here notifies another user, so every path depended on it.
+     */
     private void notify(String userId, String taskId, String message) {
-        TaskNotificationEntity notification = new TaskNotificationEntity();
-        notification.setNotificationId(UUID.randomUUID().toString());
-        notification.setUserId(userId);
-        notification.setTaskId(taskId);
-        notification.setMessage(message);
-        notification.setRead(false);
-        taskNotificationRepository.saveAndFlush(notification);
+        taskNotificationRepository.insertNotification(
+                UUID.randomUUID().toString(), userId, taskId, message);
     }
 
     /**

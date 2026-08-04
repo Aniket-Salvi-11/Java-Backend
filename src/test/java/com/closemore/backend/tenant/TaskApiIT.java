@@ -541,16 +541,25 @@ class TaskApiIT extends AbstractWebIT {
 
     @Test
     void aNotificationCanBeWrittenForAColleagueButNotAcrossTenants() throws Exception {
-        // Pins V16 at the policy level rather than through an endpoint.
+        // Pins BOTH halves of the notification write rule at the policy level, rather than through
+        // an endpoint.
         //
         // V8's WITH CHECK was identical to its USING clause, so the only notification a user could
         // insert was one addressed to themselves - and a notification exists to tell somebody else
-        // something. Every notify() in TaskService refused at the database. V16 widens the write
-        // side to the organisation and leaves reads strictly per-user.
+        // something. V16 widens the write side to the organisation and leaves reads strictly
+        // per-user.
+        //
+        // The second case below is the one this test originally missed, and missing it cost a full
+        // red CI run: it asserted the plain INSERT and passed, while every application path stayed
+        // broken. Hibernate's insert ends in RETURNING "Created_At" (Created_At is @Generated), and
+        // under RLS a RETURNING clause must also satisfy the SELECT policy - you may only read back
+        // a row you are allowed to read. A colleague's notification is not one of those. Hence the
+        // hand-written INSERT in TaskNotificationRepository, and hence this assertion: if someone
+        // reverts notify() to saveAndFlush, that fails, and if someone "fixes" this by widening
+        // USING, this case starts passing when it should not.
         //
         // Asserted directly against the app role because no endpoint can express the cross-tenant
-        // case: create() rejects a foreign assignee before the insert is attempted. Without this
-        // test, widening the write check would have no coverage of the boundary it kept.
+        // case: create() rejects a foreign assignee before the insert is attempted.
         try (Connection connection = DriverManager.getConnection(
                 RlsPostgres.instance().getJdbcUrl(),
                 RlsPostgres.APP_USER, RlsPostgres.APP_PASSWORD)) {
@@ -561,15 +570,44 @@ class TaskApiIT extends AbstractWebIT {
                 stmt.execute("SELECT set_config('app.current_user_role','Sales_Rep',true)");
                 stmt.execute("SELECT set_config('app.current_user_tenant','Taskco',true)");
 
-                // A colleague in the same organisation: permitted.
+                // 1. A colleague in the same organisation, no RETURNING: permitted. This is the
+                //    statement TaskService actually issues.
                 stmt.execute("""
                         INSERT INTO task_notifications ("Notification_ID","User_ID","Task_ID",
                           "Message","Is_Read")
                         VALUES ('tk-n-ok','tk-doer','tk-t1','Written for a colleague',FALSE)
                         """);
 
-                // user-a belongs to Acme, seeded by AbstractRlsIT. Must still be refused.
-                boolean refused = false;
+                // 2. The same row WITH RETURNING: must be refused, because tk-boss cannot read a
+                //    notification addressed to tk-doer.
+                //
+                //    Savepoints, not a bare try/catch: an RLS refusal aborts the transaction, and
+                //    every later statement would then fail with 25P02 "current transaction is
+                //    aborted" - which would make case 3 pass for entirely the wrong reason.
+                stmt.execute("SAVEPOINT before_returning");
+                boolean returningRefused = false;
+                try {
+                    stmt.execute("""
+                            INSERT INTO task_notifications ("Notification_ID","User_ID","Task_ID",
+                              "Message","Is_Read")
+                            VALUES ('tk-n-ret','tk-doer','tk-t1','With returning',FALSE)
+                            RETURNING "Created_At"
+                            """);
+                } catch (java.sql.SQLException expected) {
+                    returningRefused = true;
+                }
+                stmt.execute("ROLLBACK TO SAVEPOINT before_returning");
+                if (!returningRefused) {
+                    throw new AssertionError(
+                            "INSERT ... RETURNING succeeded for a colleague's notification. Either "
+                                    + "USING has been widened - which loses per-user read privacy - "
+                                    + "or this table no longer needs the native insert in "
+                                    + "TaskNotificationRepository. Check which before deleting it.");
+                }
+
+                // 3. user-a belongs to Acme, seeded by AbstractRlsIT. Must still be refused.
+                stmt.execute("SAVEPOINT before_cross_tenant");
+                boolean crossTenantRefused = false;
                 try {
                     stmt.execute("""
                             INSERT INTO task_notifications ("Notification_ID","User_ID","Task_ID",
@@ -577,9 +615,10 @@ class TaskApiIT extends AbstractWebIT {
                             VALUES ('tk-n-bad','user-a','tk-t1','Cross tenant',FALSE)
                             """);
                 } catch (java.sql.SQLException expected) {
-                    refused = true;
+                    crossTenantRefused = true;
                 }
-                if (!refused) {
+                stmt.execute("ROLLBACK TO SAVEPOINT before_cross_tenant");
+                if (!crossTenantRefused) {
                     throw new AssertionError(
                             "V16 widened the write check too far - a cross-tenant notification was accepted");
                 }
