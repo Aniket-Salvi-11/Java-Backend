@@ -37,10 +37,12 @@ CI: `.github/workflows/verify.yml`, runs `mvn verify` on Linux.
 | Phase 0 — Foundation | Complete |
 | Phase 1 — Entities | Complete. 16/16 tables have entity + repository + DTO |
 | Phase 2 — Auth | Complete. JWT, bcrypt, server-side sessions |
-| Phase 3 — Endpoints | **In progress.** 32 of 58 done. Tranches 1-3 green; tranche 4 is RED — see "Where tranche 4 stopped" below |
+| Phase 3 — Endpoints | **In progress.** 39 of 58 done. Tranches 1-4 green. Next: tranche 5 |
 
-**Last green: 234 tests** (tranches 1-3). Tranche 4 adds 31 more; 265 is the target once the open
-issue below is resolved. Run with `mvn verify` (NOT `mvn test` — Surefire's
+**Last green: 263 tests** (tranches 1-4) — 243 Failsafe ITs plus 20 Surefire units.
+Earlier versions of this file claimed 265. That was wrong: `grep -c '@Test'` also matches
+`@TestPropertySource`, which appears once each in `ActivityApiIT` and `AttachmentApiIT`. Count from
+the Failsafe summary line, not from grep. Run with `mvn verify` (NOT `mvn test` — Surefire's
 default includes match none of the `*IT` classes; `mvn test` silently skips the entire isolation
 proof and reports success).
 
@@ -51,8 +53,8 @@ Branch: `phase3-endpoints`, off `phase2-auth`.
 `RlsWiringPreconditionsIT` 6, `TenantIsolationIT` 13, `RepositoryTenantIsolationIT` 3,
 `ReferenceDataIT` 5, `DealsIsolationIT` 7, `DealTeamAccessIT` 7, `ActivitiesIsolationIT` 7,
 `TasksIsolationIT` 6, `EventLogIT` 5, `GeneratedTimestampsIT` 2, `LoginIT` 10, `JwtAuthIT` 14,
-`AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37, `ActivityApiIT` 26,
-`AttachmentApiIT` 19, `TaskApiIT` 31 (tranche 4, not yet green).
+`AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37, `ActivityApiIT` 25,
+`AttachmentApiIT` 18, `TaskApiIT` 31.
 
 Unit: `RbacServiceTest` 13, `DealStageRulesTest` 7. Note `DealStageRulesTest` lives in
 `src/test/java/com/closemore/backend/service/` — a third test package alongside `rbac` and
@@ -132,7 +134,20 @@ Request flow: `JwtAuthenticationFilter` → `RequestUserContextHolder` → `Tena
     insert a row addressed to yourself. When adding a policy, ask separately "who may read this" and
     "who may write this"; for anything that exists to inform another user, those answers differ.
 
-16. **Read the failing SQL, not just the exception.** Two of the three red runs so far named neither
+17. **`INSERT ... RETURNING` must satisfy the SELECT policy, not just `WITH CHECK`.** Under RLS you
+    may only use `RETURNING` on a row you are allowed to read back. Hibernate adds
+    `RETURNING "<col>"` to its insert for any `@Generated(INSERT)` column, so **any table where you
+    can write a row you cannot read is unusable through `save()`**. `task_notifications` is exactly
+    that table: V16 widened writes to the organisation and deliberately kept reads per-user, so
+    every colleague-addressed insert passed `WITH CHECK` and then failed on the read-back. The
+    error message says `new row violates row-level security policy` with no mention of the SELECT
+    policy, which is why V16 looked like a complete fix and was not. `TaskService.notify()`
+    therefore goes through `TaskNotificationRepository.insertNotification`, a native INSERT with no
+    `RETURNING`. Before mapping a `@Generated` column on any future table, check whether its
+    `USING` covers everything its `WITH CHECK` permits. `events_log` is safe only because its
+    `USING` is tenant-wide.
+
+18. **Read the failing SQL, not just the exception.** Two of the three red runs so far named neither
     the real file nor the real cause in their top-level message. The SnakeYAML error quoted a line
     of Java without saying which file; the RLS refusal named the table but not which of five call
     sites. In both cases the quoted fragment was the whole diagnosis.
@@ -240,7 +255,7 @@ policy in `pg_policies` before assuming which shape applies.
    Plan v4 calls for, plus `StorageProvider`. Both ship with one implementation (logging, local
    filesystem); SQS/OCI and S3/OCI are configuration, not code changes, and were deliberately left
    to the deployment work so no vendor SDK enters pom.xml.
-4. Tasks (7) — WRITTEN, RED. See "Where tranche 4 stopped" above.
+4. Tasks (7) — DONE. The notification write path needs a hand-written INSERT; see gotcha 17.
 5. Users + Auth (7) — `registration-policy` and `signup` are still owed; login, logout and refresh
    already exist from Phase 2, which makes that group look finished when it is not.
 6. Products, Pipelines (8) — plus the two single-record routes.
@@ -252,10 +267,10 @@ still holds, and vice versa.
 
 ---
 
-## Where tranche 4 stopped — READ THIS FIRST
+## Tranche 4 — how it went red, and why that matters for tranche 5
 
-Tranche 4 (Tasks, 7 endpoints) is written, committed and **red**. Two failures happened in
-sequence; the first is fully resolved, the second is not.
+Tranche 4 (Tasks, 7 endpoints) is green. Two failures happened in sequence before it got there;
+both are resolved, and the second one generalises to every remaining tranche.
 
 ### Failure 1 — resolved, but worth knowing
 
@@ -268,38 +283,41 @@ the Javadoc colon in `TaskRepository.java` exactly). Fixed by restoring the file
 files cannot land in the wrong place, and check `git status --short` before committing — the
 expected file count is stated per tranche.
 
-### Failure 2 — OPEN
+### Failure 2 — resolved. The instructive one.
 
-`V16__task_notifications_write_check.sql` was added and the run is still red. The output was not
-captured before the session ended, so the cause is unconfirmed.
+Symptom: 5 failures in `TaskApiIT`, every one a path where a user notifies *another* user, each
+returning 500 from
+`new row violates row-level security policy for table "task_notifications"`. The self-notify path
+passed throughout.
 
-**The problem V16 addresses.** V8 gave `task_notifications` a `WITH CHECK` identical to its `USING`
-clause:
+**The first diagnosis was right and insufficient.** V8 gave the table a `WITH CHECK` identical to
+its `USING` clause, so the only notification anyone could insert was one addressed to themselves.
+`V16__task_notifications_write_check.sql` widened the write side to any recipient in the caller's
+organisation, deriving tenancy the way V10 does for `events_log`, and left `USING` strictly
+per-user. That was necessary. The run stayed red, with the same five failures and the same message.
 
-```sql
-"User_ID" = current_setting('app.current_user_id', true)
-```
+**What the second run showed.** `TaskApiIT` ran 31 tests and the raw-JDBC policy assertion added
+alongside V16 *passed* — while the application paths it was meant to cover still failed. Same
+table, same policy, same DB role, opposite outcomes. The difference was the statement: Hibernate
+emits `... RETURNING "Created_At"` because `TaskNotificationEntity.createdAt` is
+`@Generated(INSERT)`, and the hand-written test insert did not. Under RLS a `RETURNING` clause must
+also satisfy the SELECT policy. A notification addressed to a colleague is not readable by its
+writer, so it passed the widened `WITH CHECK` and was refused on the read-back — reported with the
+same wording as a `WITH CHECK` violation.
 
-So the only notification a user could insert was one addressed to themselves — and a notification
-exists to tell somebody *else* something. Every `notify()` call in `TaskService` writes for the
-assignee or the assigner, so every one refused with
-`new row violates row-level security policy for table "task_notifications"`. That produced exactly 5
-failures, all of them the paths where one user notifies another; the self-assign path passed, which
-confirms the diagnosis.
+Confirmed against a scratch Postgres 16 with these policies rebuilt: colleague insert without
+`RETURNING` succeeds; the identical insert with `RETURNING` is refused; self-insert with
+`RETURNING` succeeds; cross-tenant is refused either way.
 
-**What V16 does.** Drops and recreates the policy with `USING` untouched and only the write side
-widened, to any recipient in the caller's organisation — derived the same way V10 derives tenancy
-for `events_log`. Reads stay strictly per-user, so this remains the one table where a colleague, and
-an Admin, cannot see your rows.
+**The fix.** `TaskService.notify()` calls
+`TaskNotificationRepository.insertNotification` — `@Modifying(flushAutomatically = true)`, native
+SQL, no `RETURNING`. V16 stays: both halves are needed. `flushAutomatically` preserves the ordering
+`saveAndFlush` gave, so the task row lands before its foreign key is referenced.
 
-**First three things to check when picking this up:**
-
-1. Did Flyway actually run V16? Look for `Migrating schema "public" to version 16` in the surefire
-   output. If absent, the file is not in `src/main/resources/db/migration/`.
-2. Is the failing test `TaskApiIT.aNotificationCanBeWrittenForAColleagueButNotAcrossTenants`? That
-   is a raw-JDBC policy assertion added alongside V16 and is not load-bearing — deleting that one
-   method leaves the other 30 intact if it is the only thing failing.
-3. Is it a different class entirely? Then it is a knock-on nobody has looked at yet.
+**The lesson worth carrying.** A test that exercises the right *rule* through the wrong *statement*
+gives false confidence, and cost a full red cycle here. The policy test now also asserts that the
+`RETURNING` form is refused, using savepoints — an RLS refusal aborts the transaction, so without
+them a later case passes with `25P02 current transaction is aborted` rather than on its merits.
 
 **A finding for a human, not just a test fix.** If the legacy backend is subject to this policy,
 notifications have been failing silently in production and nobody noticed. If it is not, the legacy
@@ -316,8 +334,8 @@ notification addressed to any colleague in their own organisation, with arbitrar
 exactly what the application does on their behalf and it cannot cross a tenant boundary. It does
 mean a notification is not proof of who triggered it — `events_log` is, and its own `WITH CHECK`
 ties each row to the acting user. The tighter alternative is a `SECURITY DEFINER` function like
-V14's auth lookups; it was not chosen because this project puts enforcement in policies and it would
-add grants to the cutover checklist.
+V14's auth lookups; it was not chosen because this project puts enforcement in policies and it
+would add grants to the cutover checklist.
 
 ---
 
