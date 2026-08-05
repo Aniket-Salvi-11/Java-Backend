@@ -18,7 +18,8 @@ import java.util.List;
  * Five read-only aggregates. No writes, no pagination - each response is either a small object or a
  * list bounded by the number of stages, reps, or ten activities.
  *
- * <p>Four of the five are owner-scoped; the leaderboard deliberately is not. See DashboardService.
+ * <p>Four of the five are owner-scoped. The leaderboard is Admin/Executive only - not by choice
+ * but because RLS makes a rep's view of it meaningless. See DashboardService.
  */
 @RestController
 @RequestMapping("/api/v1/dashboard")

@@ -11,6 +11,7 @@ import com.closemore.backend.dto.StageSummaryResponse;
 import com.closemore.backend.mapper.DtoMapper;
 import com.closemore.backend.rbac.AuthenticatedUser;
 import com.closemore.backend.rbac.CurrentUserService;
+import com.closemore.backend.rbac.RbacException;
 import com.closemore.backend.rbac.RbacService;
 import com.closemore.backend.repository.ActivityRepository;
 import com.closemore.backend.repository.DealRepository;
@@ -127,9 +128,17 @@ public class DashboardService {
     /**
      * GET /api/v1/dashboard/leaderboard - reps ranked by won revenue.
      *
-     * <p><b>Not owner-scoped, unlike the other four.</b> A leaderboard of one person is not a
-     * leaderboard. v5 describes it as a ranking of sales reps, so every rep sees the whole
-     * organisation's standings - which is the point of publishing one. Still tenant-bounded by RLS.
+     * <p><b>Admin and Executive only - a stopgap, and a divergence from v5.</b> v5 describes a
+     * ranking of sales reps, which implies reps can see it. They cannot: V4's deals policy scopes
+     * a Sales_Rep to {@code Owner_ID = current_user_id}, so every query they make returns only
+     * their own deals and the "ranking" would be one row - their own name, with no way to tell that
+     * from genuinely leading. RLS is NARROWER than the tenant for deals, unlike every other table
+     * this dashboard reads.
+     *
+     * <p>Refusing is the loud failure; returning a one-row leaderboard is the quiet one. Matching
+     * the JS backend properly means a SECURITY DEFINER aggregate that reads across owners, which
+     * exposes every rep's won revenue to every other rep - a security decision nobody has taken.
+     * Raised in docs/HANDOFF.md; until then this endpoint refuses rather than misleads.
      *
      * <p><b>The timeframe filter uses {@code Updated_At}, which is a proxy.</b> There is no
      * Closed_Date column on deals: the schema records when a row last changed, not when it closed.
@@ -140,7 +149,11 @@ public class DashboardService {
      * @param timeframe {@code month}, {@code quarter}, or null for all time
      */
     public List<LeaderboardEntryResponse> leaderboard(String timeframe) {
-        currentUserService.require();
+        AuthenticatedUser user = currentUserService.require();
+        if (!rbacService.canViewAll(user)) {
+            throw new RbacException(403,
+                    "The leaderboard is available to Admin and Executive roles only");
+        }
         OffsetDateTime cutoff = cutoffFor(timeframe);
 
         Map<String, long[]> counts = new LinkedHashMap<>();

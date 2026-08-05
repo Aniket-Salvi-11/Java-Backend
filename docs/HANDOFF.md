@@ -39,7 +39,7 @@ CI: `.github/workflows/verify.yml`, runs `mvn verify` on Linux.
 | Phase 2 — Auth | Complete. JWT, bcrypt, server-side sessions |
 | Phase 3 — Endpoints | **COMPLETE.** All 58 of v5's inventory, plus 3 single-record reads. Tranches 1-7 green |
 
-**Last green: 376 tests** (tranches 1-7, Phase 3 complete) — 356 Failsafe ITs plus 20 Surefire
+**Last green: 377 tests** (tranches 1-7, Phase 3 complete) — 357 Failsafe ITs plus 20 Surefire
 units.
 
 **Endpoint count, counted rather than tallied.** 61 request mappings across twelve controllers:
@@ -67,7 +67,7 @@ Branch: `phase3-endpoints`, off `phase2-auth`.
 `ReferenceDataIT` 5, `DealsIsolationIT` 7, `DealTeamAccessIT` 7, `ActivitiesIsolationIT` 7,
 `TasksIsolationIT` 6, `EventLogIT` 5, `GeneratedTimestampsIT` 2, `LoginIT` 10, `JwtAuthIT` 14,
 `AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37, `ActivityApiIT` 25,
-`AttachmentApiIT` 18, `TaskApiIT` 31, `SignupApiIT` 11, `UserApiIT` 33, `ProductApiIT` 21, `PipelineApiIT` 19, `DashboardApiIT` 20, `AdminHealthApiIT` 9.
+`AttachmentApiIT` 18, `TaskApiIT` 31, `SignupApiIT` 11, `UserApiIT` 33, `ProductApiIT` 21, `PipelineApiIT` 19, `DashboardApiIT` 21, `AdminHealthApiIT` 9.
 
 Unit: `RbacServiceTest` 13, `DealStageRulesTest` 7. Note `DealStageRulesTest` lives in
 `src/test/java/com/closemore/backend/service/` — a third test package alongside `rbac` and
@@ -146,6 +146,15 @@ Request flow: `JwtAuthenticationFilter` → `RequestUserContextHolder` → `Tena
     shipped with both identical, which made the notification feature impossible - you could only
     insert a row addressed to yourself. When adding a policy, ask separately "who may read this" and
     "who may write this"; for anything that exists to inform another user, those answers differ.
+
+25. **For deals, RLS is NARROWER than the tenant — and that constrains what an endpoint can
+    even offer.** Every other table the dashboard reads is organisation-scoped, so it is easy to
+    assume "RLS bounds it to the tenant" everywhere. V4's deals policy does not: a Sales_Rep sees
+    `Owner_ID = current_user_id` and nothing else. Any endpoint that aggregates ACROSS owners is
+    therefore unavailable to a rep by construction rather than by a missing check — and it fails
+    SILENTLY, because `findAll()` returns their own rows instead of an error. This is why
+    `/dashboard/leaderboard` is Admin/Executive only. Before designing any cross-owner read, check
+    the policy on the table it reads.
 
 24. **A wrong aggregate does not throw — it returns a plausible number.** Every dashboard
     endpoint answers with a figure, so a forgotten owner filter produces a larger, entirely
@@ -440,6 +449,13 @@ would add grants to the cutover checklist.
 - **`GET /api/auth/registration-policy` tells an anonymous caller whether an organisation name
   exists.** Unavoidable if the form is to adapt itself, and it reveals nothing that attempting a
   signup would not. Booleans only, one exact name, not enumerable in bulk. Needs QA sign-off.
+- **`GET /api/v1/dashboard/leaderboard` refuses Sales_Reps, which diverges from v5.** v5 calls it
+  a ranking of sales reps, implying reps see it; V4's deals policy makes that impossible without a
+  bypass, so the endpoint returns 403 rather than a one-row ranking a rep could not tell from
+  genuinely leading. Matching the JS behaviour needs a SECURITY DEFINER aggregate reading across
+  owners — which publishes every rep's won revenue to every other rep. A product and security
+  decision, not a code one. `DashboardApiIT` pins the current refusal, so flipping it is a
+  one-test change.
 - **The leaderboard timeframe filter uses `Updated_At` as a proxy for "when it closed".** There
   is no Closed_Date column on deals — the schema records when a row last changed, not when it was
   won. A deal won in March and edited in May counts as May. It is the least-wrong column available.

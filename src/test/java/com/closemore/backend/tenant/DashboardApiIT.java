@@ -236,16 +236,28 @@ class DashboardApiIT extends AbstractWebIT {
     // --- leaderboard -------------------------------------------------------------------------
 
     @Test
-    void theLeaderboardRanksEveryRepEvenForARep() throws Exception {
-        // The one endpoint here that is NOT owner-scoped. A leaderboard of one person is not a
-        // leaderboard, and publishing standings is the entire purpose.
+    void theLeaderboardRanksEveryRepForAnAdmin() throws Exception {
         mockMvc.perform(get("/api/v1/dashboard/leaderboard")
-                        .header("Authorization", "Bearer " + tokenFor("rep@dashco.example")))
+                        .header("Authorization", "Bearer " + tokenFor("admin@dashco.example")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)))
                 .andExpect(jsonPath("$[0].ownerId").value("db-rep"))
                 .andExpect(jsonPath("$[0].wonValue").value(400.0))
                 .andExpect(jsonPath("$[1].ownerId").value("db-rep2"));
+    }
+
+    @Test
+    void aSalesRepIsRefusedTheLeaderboardRatherThanShownAOneRowOne() throws Exception {
+        // Records a LIMITATION, not a feature. V4's deals policy scopes a Sales_Rep to their own
+        // rows, so an organisation-wide ranking is unreachable for them - findAll() would return
+        // one deal and the "leaderboard" would be their own name alone, indistinguishable from
+        // genuinely leading. 403 is the loud failure; the quiet one is worse.
+        //
+        // If this ever needs to match the JS backend, it becomes a SECURITY DEFINER aggregate and
+        // this test flips to 200. See docs/HANDOFF.md.
+        mockMvc.perform(get("/api/v1/dashboard/leaderboard")
+                        .header("Authorization", "Bearer " + tokenFor("rep@dashco.example")))
+                .andExpect(status().isForbidden());
     }
 
     @Test
