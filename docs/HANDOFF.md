@@ -37,9 +37,22 @@ CI: `.github/workflows/verify.yml`, runs `mvn verify` on Linux.
 | Phase 0 — Foundation | Complete |
 | Phase 1 — Entities | Complete. 16/16 tables have entity + repository + DTO |
 | Phase 2 — Auth | Complete. JWT, bcrypt, server-side sessions |
-| Phase 3 — Endpoints | **In progress.** 57 of 58 done. Tranches 1-6 green. Next: tranche 7 |
+| Phase 3 — Endpoints | **COMPLETE.** All 58 of v5's inventory, plus 3 single-record reads. Tranches 1-7 green |
 
-**Last green: 347 tests** (tranches 1-6) — 327 Failsafe ITs plus 20 Surefire units.
+**Last green: 376 tests** (tranches 1-7, Phase 3 complete) — 356 Failsafe ITs plus 20 Surefire
+units.
+
+**Endpoint count, counted rather than tallied.** 61 request mappings across twelve controllers:
+Deals 13, Tasks 7, Users 6, Auth 5, Contacts 5, Products 5, Pipelines 5, Dashboard 5, Activities 4,
+Attachments 4, Admin 1, Health 1. That is v5's 58 plus the three single-record `GET /{id}` routes
+added by the decisions list (Contacts, Products, Pipelines). Earlier versions of this file carried a
+running total that drifted — it said "57 of 58" when the real figure was 51 of v5's inventory. Count
+the mappings, do not add up tranches:
+
+```bash
+grep -h "@GetMapping\|@PostMapping\|@PutMapping\|@DeleteMapping\|@PatchMapping" \
+  src/main/java/com/closemore/backend/controller/*.java | wc -l
+```
 Earlier versions of this file claimed 265. That was wrong: `grep -c '@Test'` also matches
 `@TestPropertySource`, which appears once each in `ActivityApiIT` and `AttachmentApiIT`. Count from
 the Failsafe summary line, not from grep. Run with `mvn verify` (NOT `mvn test` — Surefire's
@@ -54,7 +67,7 @@ Branch: `phase3-endpoints`, off `phase2-auth`.
 `ReferenceDataIT` 5, `DealsIsolationIT` 7, `DealTeamAccessIT` 7, `ActivitiesIsolationIT` 7,
 `TasksIsolationIT` 6, `EventLogIT` 5, `GeneratedTimestampsIT` 2, `LoginIT` 10, `JwtAuthIT` 14,
 `AuthEndpointIT` 9, `JwtFilterIT` 8, `ContactApiIT` 30, `DealApiIT` 37, `ActivityApiIT` 25,
-`AttachmentApiIT` 18, `TaskApiIT` 31, `SignupApiIT` 11, `UserApiIT` 33, `ProductApiIT` 21, `PipelineApiIT` 19.
+`AttachmentApiIT` 18, `TaskApiIT` 31, `SignupApiIT` 11, `UserApiIT` 33, `ProductApiIT` 21, `PipelineApiIT` 19, `DashboardApiIT` 20, `AdminHealthApiIT` 9.
 
 Unit: `RbacServiceTest` 13, `DealStageRulesTest` 7. Note `DealStageRulesTest` lives in
 `src/test/java/com/closemore/backend/service/` — a third test package alongside `rbac` and
@@ -133,6 +146,16 @@ Request flow: `JwtAuthenticationFilter` → `RequestUserContextHolder` → `Tena
     shipped with both identical, which made the notification feature impossible - you could only
     insert a row addressed to yourself. When adding a policy, ask separately "who may read this" and
     "who may write this"; for anything that exists to inform another user, those answers differ.
+
+24. **A wrong aggregate does not throw — it returns a plausible number.** Every dashboard
+    endpoint answers with a figure, so a forgotten owner filter produces a larger, entirely
+    believable total rather than an error, and a Sales_Rep has no way to tell their pipeline from
+    their team's. Two scoping layers apply and they are different things: RLS bounds every query to
+    the organisation, and `RbacService.canViewAll` decides own-versus-all inside it. Four of the
+    five aggregates are owner-scoped; the leaderboard deliberately is not, because a leaderboard of
+    one person is not a leaderboard. `DashboardService.visibleDeals()` is the single place the
+    owner filter lives — do not reintroduce it at call sites. The seed in `DashboardApiIT` uses
+    values chosen so every scoping mistake lands on a visibly wrong number.
 
 22. **Two tables have no RLS at all, and the Admin check is the only thing guarding them.**
     `products` and `pipelines` are global reference data — every organisation reads and writes the
@@ -300,7 +323,8 @@ policy in `pg_policies` before assuming which shape applies.
 6. Products, Pipelines (8) — DONE, plus the two single-record routes. Both groups are GLOBAL
    reference data with no RLS; see gotcha 22. The stage cascade is the only real logic —
    `PipelineService.update`.
-7. Dashboard, Admin, Health (7).
+7. Dashboard, Admin, Health (7) — DONE. Five read-only aggregates, the audit log reader, and
+   the liveness probe. See gotcha 24 for the scoping trap in the aggregates.
 
 **Defence in depth:** RLS enforces tenancy, but keep `RbacService` checks in the service layer too —
 mirroring the JS original. If a policy is ever dropped by a bad migration, the application check
@@ -416,6 +440,14 @@ would add grants to the cutover checklist.
 - **`GET /api/auth/registration-policy` tells an anonymous caller whether an organisation name
   exists.** Unavoidable if the form is to adapt itself, and it reveals nothing that attempting a
   signup would not. Booleans only, one exact name, not enumerable in bulk. Needs QA sign-off.
+- **The leaderboard timeframe filter uses `Updated_At` as a proxy for "when it closed".** There
+  is no Closed_Date column on deals — the schema records when a row last changed, not when it was
+  won. A deal won in March and edited in May counts as May. It is the least-wrong column available.
+  Confirm against the JS implementation before anyone reports off these numbers.
+- **`GET /api/v1/dashboard/forecast` returns both a raw and a probability-weighted total.** v5 says
+  "forecast revenue total" without saying which, and the two differ substantially on any real
+  pipeline. Returning both makes the ambiguity visible; the frontend team should say which one the
+  existing dashboard renders so the other can be dropped.
 - **The pipeline stage cascade is tenant-partial, and its rename rule is a guess.** Two separate
   questions. (1) Should an Admin editing a global pipeline be able to move other organisations'
   deals? Today they cannot, which is the conservative reading but diverges from the JS backend.

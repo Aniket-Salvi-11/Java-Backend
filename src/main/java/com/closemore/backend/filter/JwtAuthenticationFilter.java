@@ -60,7 +60,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // signup form calls to decide what to render, and signup is how an account comes to
             // exist. Requiring a token on either would make them unreachable.
             "/api/auth/registration-policy",
-            "/api/auth/signup");
+            "/api/auth/signup",
+            // Tranche 7. A health probe cannot present a token, and one that demanded a token
+            // would report every instance unhealthy - pulling the whole service out of rotation.
+            "/api/health");
 
     private final JwtService jwtService;
     private final RequestUserContextHolder contextHolder;
