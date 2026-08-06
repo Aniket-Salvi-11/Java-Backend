@@ -2,19 +2,29 @@
 
 Fresh Java/Spring Boot backend for CloseMore CRM.
 
-**Authoritative plan: Migration Plan v3** — a like-for-like port of 57 endpoints across 12 resource
-groups, reusing the existing schema and RLS untouched. The Build Plan PDF (ground-up rebuild across
-7 domains) is *not* what this repo implements; it omits Tasks, Dashboard, Auth and Admin, all of
-which are in scope here. Recorded so the decision isn't relitigated later.
+**Authoritative plan: Migration Plan v5** — a like-for-like port of 58 endpoints across 12 resource
+groups, reusing the existing schema and RLS untouched. Superseded v3 during Phase 3; the 57-vs-58
+discrepancy was a stale header in v5 itself (see `docs/HANDOFF.md`). The Build Plan PDF (ground-up
+rebuild across 7 domains) is *not* what this repo implements; it omits Tasks, Dashboard, Auth and
+Admin, all of which are in scope here. Recorded so the decision isn't relitigated later.
 
 ## Status
 
 | Phase | State |
 |---|---|
 | **Phase 0 — Foundation** | **Complete.** All four build-sequence items done and verified in CI. |
-| **Phase 1 — Entities** | **Complete.** All 16 tables have an entity, repository and DTO. 61 integration tests green. |
-| **Phase 2 — Auth** | Not started. Real authentication, password hashing, global exception handling. |
-| **Phase 3 — Endpoints** | Not started. The 57-endpoint port. No services or controllers exist yet. |
+| **Phase 1 — Entities** | **Complete.** All 16 tables have an entity, repository and DTO. |
+| **Phase 2 — Auth** | **Complete.** JWT login/refresh/logout, password hashing, `RbacException` -> HTTP mapping. |
+| **Phase 3 — Endpoints** | **Complete.** All 58 endpoints in v5's inventory, plus 3 single-record reads (61 request mappings total). |
+
+**377 tests green** — 357 Failsafe integration tests, 20 Surefire unit tests.
+
+**This repo is code-complete. It is not yet cleared for production.** The remaining work is outside
+this codebase: database grants, a DBA-run role setup, a frontend/mobile release, and a handful of
+behaviours inferred from the schema that need confirming against the live JS backend. All of it is
+tracked in **[`docs/CUTOVER.md`](docs/CUTOVER.md)** — read that before touching QA or production.
+**[`docs/HANDOFF.md`](docs/HANDOFF.md)** is the session-to-session working document: current branch
+state, every hard-won gotcha from building this, and the open items still needing an answer.
 
 Requires Docker and **JDK 21**. `pom.xml` sets `java.version` to 21; CI uses Temurin 21.
 
@@ -53,12 +63,17 @@ granted at `CREATE TABLE` time and no grant has to be sequenced against the migr
 ## Running it
 
 ```bash
-mvn test          # unit tests only - RbacServiceTest. Does NOT run any IT.
-mvn verify        # unit + all 61 integration tests (throwaway Postgres via Docker)
+mvn test          # unit tests only (20 - RbacServiceTest, DealStageRulesTest). Does NOT run any IT.
+mvn verify        # unit + all 357 integration tests (throwaway Postgres via Docker)
 mvn spring-boot:run
-curl -H "X-User-Id: u-1" -H "X-User-Role: Admin" -H "X-User-Tenant: Acme" \
-     http://localhost:8080/internal/tenant-context-echo
+curl -X POST http://localhost:8080/api/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{"Email":"someone@example.com","Password":"..."}'
 ```
+
+The `X-User-Id`/`X-User-Role`/`X-User-Tenant` header-trust shown in earlier versions of this file
+was the Phase 0 shortcut and no longer works outside a non-`prod` profile — see "Phase 0 safety
+guards" below. Every endpoint now authenticates via the bearer token returned from `/api/auth/login`.
 
 **`mvn verify`, not `mvn test`, is the gate.** Surefire's default includes (`Test*`, `*Test`,
 `*Tests`, `*TestCase`) match none of the IT classes, so `mvn test` silently skips the entire
@@ -66,6 +81,34 @@ isolation proof. Failsafe is bound to `verify` for exactly this reason.
 
 If Docker on Windows is broken, don't fight it — push and read the GitHub Actions run. Linux CI is
 the authoritative gate and takes about a minute.
+
+## Endpoint coverage — 61 request mappings
+
+| Group | Mappings |
+|---|---:|
+| Deals | 13 |
+| Tasks | 7 |
+| Users | 6 |
+| Auth | 5 |
+| Contacts | 5 |
+| Products | 5 |
+| Pipelines | 5 |
+| Dashboard | 5 |
+| Activities | 4 |
+| Attachments | 4 |
+| Admin | 1 |
+| Health | 1 |
+
+Counted from the controllers, not tallied from the plan — a running total drifted during Phase 3 and
+the fix was to make this reproducible:
+
+```bash
+grep -h "@GetMapping\|@PostMapping\|@PutMapping\|@DeleteMapping\|@PatchMapping" \
+  src/main/java/com/closemore/backend/controller/*.java | wc -l
+```
+
+61 is v5's 58 plus 3 single-record `GET /{id}` routes (Contacts, Products, Pipelines) added by a
+project decision, not present in v5's inventory.
 
 ## Entity coverage — 16/16
 
@@ -126,11 +169,16 @@ files.**
 tenant-owned column it needs a policy, and `RlsWiringPreconditionsIT.TENANT_TABLES` is where to add
 it.
 
-## The test suite — 61 integration tests
+## The test suite — 357 integration tests, 20 unit tests
 
 **When these go red, read `RlsWiringPreconditionsIT` first.** It asserts the plumbing rather than
 the behaviour, so its failures name the actual cause. "The policy is broken" and "the connection is
 wrong" produce identical symptoms everywhere else.
+
+The Phase 1 isolation classes below are the foundation the rest is built on and are still the right
+place to start when RLS itself is suspect. Full per-class counts for every Phase 2/3 endpoint group
+are in `docs/HANDOFF.md`'s "Test classes" table — reproduced here would drift the same way the
+57-vs-58 endpoint count did, so that table is the single source now.
 
 | Class | Tests | Covers |
 |---|---:|---|
@@ -144,6 +192,7 @@ wrong" produce identical symptoms everywhere else.
 | `TasksIsolationIT` | 6 | The three-hop reaction chain; tenant-only task visibility; per-user notifications. |
 | `EventLogIT` | 5 | IDENTITY key generation; writing through Hibernate; `WITH CHECK` surfacing correctly on flush. |
 | `GeneratedTimestampsIT` | 2 | `@Generated` reads DB defaults and trigger-written values back onto the returned entity. |
+| *(Phase 2/3 endpoint tests)* | 296 | Auth, Contacts, Deals, Activities, Attachments, Tasks, Signup, Users, Products, Pipelines, Dashboard, Admin/Health. One class per resource group — see `docs/HANDOFF.md`. |
 
 ## Ordering caveat
 
@@ -163,56 +212,54 @@ Two beans exist only to make the Phase 0 shortcut impossible to ship:
 
 ## Before deploying to production
 
-The test setup and production differ in exactly two ways, both of which fail silently if missed:
+**This section is superseded by [`docs/CUTOVER.md`](docs/CUTOVER.md).** What was two items when
+Phase 1 ended (a prod app role, one `GRANT EXECUTE`) is now an ordered, multi-team checklist:
+ten `GRANT EXECUTE` statements across three migrations, a duplicate-email check, a Flyway baseline,
+an open `/api/v1` versioning decision that moves 53 client-facing routes, eight behaviours inferred
+from the schema that need confirming against the live JS backend, and two security decisions this
+repo deliberately left for a human to make. Read that document before touching QA or production —
+it is kept current; this README is not the place for that checklist anymore.
 
-1. **Production needs its own non-superuser app role.** `db/init/01-create-app-role.sql` is the
-   spec for its privileges, but it is test-only and cannot run there.
-2. **V11's function needs an explicit grant.** The migration deliberately grants `EXECUTE` to
-   nobody so it stays portable; tests pick it up via `ALTER DEFAULT PRIVILEGES`. Without this,
-   login breaks in production while every test stays green:
+## How Phase 2 and Phase 3 answered the open questions from Phase 1
 
-   ```sql
-   GRANT EXECUTE ON FUNCTION auth_lookup_user_by_email(TEXT) TO <prod_app_role>;
-   ```
+Kept as a short record of what was decided, since the reasoning is easy to lose once the code is
+just... how it works now.
 
-## Notes for Phase 2
+**Authentication is JWT, not header-trust.** Login issues a signed access token (30 min) and a
+rotating refresh token; every subsequent request carries `Authorization: Bearer <token>`. Tenant and
+role come from inside the signed token, never from a client-supplied header — the
+`X-User-Id`/`X-User-Role`/`X-User-Tenant` shortcut from Phase 0 is `@Profile("!prod")`-gated and
+cannot reach production. `auth_lookup_user_by_email` (V11) remains the pre-auth lookup; V14/V15
+widened it and added the session-token functions rather than replacing the mechanism.
 
-**Authentication must be JWT if mobile is on the roadmap.** Header-trust works when a trusted server
-sets the headers; a mobile app runs on a user's device and anyone can send
-`X-User-Tenant: SomeOtherCompany`. Tenant and role must come from inside a signed token. The RLS
-mechanism itself does not change — only where the tenant value originates.
+**RLS denials are translated at the boundary.** `BadSqlGrammarException` strips the driver message
+for SQLSTATE `42501`, so the global exception handler matches on the SQLSTATE itself rather than the
+message, and maps it to 403 — a boundary, not a 500.
 
-**Pre-auth lookup is already solved.** `auth_lookup_user_by_email(TEXT)` (V11) is a `SECURITY
-DEFINER` function that answers one question and cannot enumerate the directory. Do not reintroduce a
-blanket RLS bypass to make a repository finder work — that reopens the hole V11 closed.
+**The API is versioned — `/api/v1/...` — except where it deliberately is not.** Auth stays at
+`/api/auth/*` and health at `/api/health`, because both predate the versioning decision or are
+infrastructure rather than a resource group. This is now the single largest open item before
+cutover: v5's inventory is entirely unversioned, so 53 routes differ from the plan document. See
+`docs/CUTOVER.md` step 6b.
 
-## Notes for Phase 3
+**Pagination exists, opt-in.** Every list endpoint returns a bare array by default and switches to
+the `PageResponse` envelope (`items`, `totalElements`, `hasNext`, ...) when `?page=` or `?size=` is
+present, rather than requiring pagination everywhere.
 
-**RLS denials arrive as `BadSqlGrammarException` with the reason stripped.** SQLSTATE `42501` falls
-in Spring's `BAD_SQL_GRAMMAR_CODES`, and that constructor is the one branch in
-`SQLStateSQLExceptionTranslator` that drops `ex.getMessage()`. To return 403 rather than 500, match
-the SQLSTATE — the type and message will both mislead you:
+**The avatar columns were not changed.** `Avatar_Data_URL` and `Org_Avatar_Data_URL` still round-trip
+as inline base64 through the standard DTOs — flagged as a future migration in `docs/HANDOFF.md`
+rather than addressed in Phase 3, since resizing the field is a frontend-visible change and no
+resource group's endpoints depended on fixing it to ship.
 
-```java
-catch (BadSqlGrammarException e) {
-    if ("42501".equals(e.getSQLException().getSQLState())) { /* RLS denied - a boundary, not a bug */ }
-}
-```
+## What's next
 
-**Add pagination before the pattern spreads.** No repository currently paginates. Retrofitting one
-service is cheap; retrofitting twelve is not.
+Phases 0–3 are code-complete. What remains is entirely outside this repository:
 
-**Version the API.** `/api/v1/...` costs nothing now and is awkward later — mobile clients keep
-calling old endpoints for months after a release.
+- **`docs/CUTOVER.md`** — the DBA/frontend/JS-backend checklist. Start here.
+- **`docs/HANDOFF.md`** — the living working document: current state, every gotcha discovered while
+  building this, and the open items still needing an answer from someone else.
 
-**Consider the avatar columns.** `Avatar_Data_URL` and `Org_Avatar_Data_URL` store images as inline
-base64 text. A 50-contact list could be several megabytes of JSON, most of it images — slow and
-expensive on mobile. Object storage plus a URL is the usual fix, and it is cheaper to change before
-clients depend on the current shape.
-
-## Deferred, deliberately
-
-- Real authentication (header-trust vs JWT — Finding 2, Phase 2)
-- Password hashing (Finding 1, Phase 2)
-- Global exception handling / `RbacException` -> HTTP mapping (Phase 2)
-- Services and controllers for all 12 resource groups (Phase 3)
+No further phase is currently planned in this repo. If one starts, the pattern established here
+(a `HANDOFF.md` kept current every session, a `CUTOVER.md` kept current at the end of each phase,
+this README updated when status actually changes rather than left as a snapshot) is worth keeping —
+this file drifted for two full phases before this rewrite, which is the failure mode to avoid.
