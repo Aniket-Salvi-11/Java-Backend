@@ -250,20 +250,25 @@ response.
 
 ## Before production — these fail silently if missed
 
-`docs/PHASE2_CUTOVER.md` is the full handoff for the DBA/frontend/JS teams. Key items:
+`docs/CUTOVER.md` is the full handoff for the DBA/frontend/JS teams (it supersedes
+`PHASE2_CUTOVER.md`, now a pointer). Key items:
 
 1. **Production and QA each need their own non-superuser app role.** The init script is the spec
    but is test-only.
-2. **8 `GRANT EXECUTE` statements** for the V14/V15 functions. Tests get them via
+2. **10 `GRANT EXECUTE` statements** for the V14/V15/V17 functions — the count grew in tranche 5a
+   and the two new ones fail quietly: login still works, only signup breaks. Tests get them via
    `ALTER DEFAULT PRIVILEGES`; real environments do not.
 3. **`JWT_SECRET`** must be overridden, ≥32 bytes. The default is a placeholder.
 4. **Flyway baseline.** QA/prod have the schema but no `flyway_schema_history`. Set
    `baseline-on-migrate: true` and `baseline-version: 9` **there**, not in `application.yml`.
+   Expect `V10`-`V17` to apply on top.
 5. **Schedule `auth_purge_expired_refresh_tokens()`.** Nothing calls it.
 6. **Check for duplicate emails before V13:**
    `SELECT lower("Email"), count(*) FROM users GROUP BY 1 HAVING count(*) > 1;`
 7. **V14 drops and recreates `auth_lookup_user_by_email`** with 14 columns instead of 5. If the JS
    backend adopted the 5-column version, it must update in the same release.
+8. **The `/api/v1` prefix moves 53 routes** and must ship in the same client release as bearer
+   tokens. Still an open decision — see `docs/CUTOVER.md` step 6b.
 
 ---
 
